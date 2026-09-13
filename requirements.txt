@@ -1,6 +1,9 @@
 streamlit
+streamlit-webrtc
 SpeechRecognition
+numpy
 requests
 wikipedia
 PyPDF2
 python-docx
+av
