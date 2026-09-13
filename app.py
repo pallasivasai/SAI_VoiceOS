@@ -1,27 +1,29 @@
 """
-=========================================================
-                 SAI VOICE OS
-=========================================================
+===========================================================
+                    SAI VOICE OS
+===========================================================
 
-VOICE ONLY ACCESSIBILITY OS
+VOICE-FIRST ACCESSIBILITY OPERATING SYSTEM
 
-STREAMLIT CLOUD
-----------------
+CLOUD / STREAMLIT
+-----------------
 Voice input
-Browser TTS
-Internet
-Google Search
-YouTube
+Voice response
+Calculator
+Internet search
 Wikipedia
 Weather
-Calculator
-PDF / TXT / DOCX
+YouTube
+Google
+PDF
+TXT
+DOCX
 GitHub
 
 WINDOWS LOCAL
-----------------
+-----------------
 Microphone
-TTS
+Voice response
 Notepad
 Calculator
 Chrome
@@ -29,21 +31,29 @@ YouTube
 Google
 WhatsApp
 Screenshot
-Local Files
-Music
+Local files
+Local documents
 Notes
-Shutdown / Restart
+Music
 
-NO TEXT COMMAND INPUT
-=========================================================
+IMPORTANT:
+-----------
+pyautogui is imported ONLY on Windows.
+It is never imported on Streamlit Cloud.
+
+NO TEXT COMMAND INPUT.
+===========================================================
 """
+
+# =========================================================
+# STANDARD LIBRARIES
+# =========================================================
 
 import os
 import io
 import re
 import json
 import base64
-import random
 import datetime
 import webbrowser
 import urllib.parse
@@ -52,8 +62,9 @@ import subprocess
 import tempfile
 import platform
 
+
 # =========================================================
-# OPTIONAL LIBRARIES
+# STREAMLIT
 # =========================================================
 
 try:
@@ -61,35 +72,97 @@ try:
 except ImportError:
     st = None
 
+
+# =========================================================
+# DETECT ENVIRONMENT
+# =========================================================
+
+IS_WINDOWS = (
+    platform.system().lower() == "windows"
+)
+
+IS_STREAMLIT = (
+    st is not None
+)
+
+
+# =========================================================
+# SPEECH RECOGNITION
+# =========================================================
+
 try:
     import speech_recognition as sr
 except ImportError:
     sr = None
 
-try:
-    import pyttsx3
-except ImportError:
-    pyttsx3 = None
 
-try:
-    import pyautogui
-except ImportError:
-    pyautogui = None
+# =========================================================
+# WINDOWS TTS
+# ONLY USED ON WINDOWS
+# =========================================================
+
+pyttsx3 = None
+tts_engine = None
+
+if IS_WINDOWS:
+
+    try:
+        import pyttsx3
+
+    except Exception:
+        pyttsx3 = None
+
+
+# =========================================================
+# WINDOWS SCREENSHOT
+# VERY IMPORTANT:
+# DO NOT IMPORT PYAutoGUI ON STREAMLIT CLOUD
+# =========================================================
+
+pyautogui = None
+
+if IS_WINDOWS:
+
+    try:
+        import pyautogui
+
+    except Exception:
+        pyautogui = None
+
+
+# =========================================================
+# WIKIPEDIA
+# =========================================================
 
 try:
     import wikipedia
 except ImportError:
     wikipedia = None
 
+
+# =========================================================
+# REQUESTS
+# =========================================================
+
 try:
     import requests
 except ImportError:
     requests = None
 
+
+# =========================================================
+# PDF
+# =========================================================
+
 try:
     from PyPDF2 import PdfReader
 except ImportError:
     PdfReader = None
+
+
+# =========================================================
+# DOCX
+# =========================================================
 
 try:
     from docx import Document
@@ -98,18 +171,7 @@ except ImportError:
 
 
 # =========================================================
-# MODE DETECTION
-# =========================================================
-
-STREAMLIT_MODE = st is not None
-
-WINDOWS_MODE = (
-    platform.system().lower() == "windows"
-)
-
-
-# =========================================================
-# CONFIG
+# CONFIGURATION
 # =========================================================
 
 APP_NAME = "SAI Voice OS"
@@ -121,20 +183,20 @@ GITHUB_USERNAME = os.getenv(
 
 GITHUB_TOKEN = os.getenv(
     "GITHUB_TOKEN",
-    "" 
+    ""
 )
 
 
 # =========================================================
-# WINDOWS TTS
+# WINDOWS TTS INITIALIZATION
 # =========================================================
-
-tts_engine = None
-
 
 def initialize_windows_tts():
 
     global tts_engine
+
+    if not IS_WINDOWS:
+        return
 
     if pyttsx3 is None:
         return
@@ -149,6 +211,7 @@ def initialize_windows_tts():
 
         if voices:
 
+            # Use first available voice
             tts_engine.setProperty(
                 "voice",
                 voices[0].id
@@ -164,7 +227,12 @@ def initialize_windows_tts():
             1.0
         )
 
-    except Exception:
+    except Exception as error:
+
+        print(
+            "TTS initialization error:",
+            error
+        )
 
         tts_engine = None
 
@@ -179,7 +247,8 @@ def speak_windows(text):
         return
 
     print(
-        f"SAI: {text}"
+        "SAI:",
+        text
     )
 
     if tts_engine is None:
@@ -187,19 +256,26 @@ def speak_windows(text):
 
     try:
 
-        tts_engine.say(text)
+        tts_engine.say(
+            text
+        )
+
         tts_engine.runAndWait()
 
-    except Exception as e:
+    except Exception as error:
 
         print(
             "TTS error:",
-            e
+            error
         )
 
 
 # =========================================================
 # CLOUD BROWSER SPEAK
+#
+# Uses browser SpeechSynthesis.
+#
+# No text output is required for the user.
 # =========================================================
 
 def speak_cloud(text):
@@ -207,48 +283,60 @@ def speak_cloud(text):
     if not text:
         return
 
-    if not STREAMLIT_MODE:
+    if not IS_STREAMLIT:
         return
 
-    javascript_text = json.dumps(
+    safe_text = json.dumps(
         str(text)
     )
 
     html = f"""
     <script>
 
-        const message = {javascript_text};
+        const message = {safe_text};
 
-        function speakMessage() {{
+        function speakNow() {{
 
-            if (
-                "speechSynthesis"
-                in window
-            ) {{
+            try {{
 
-                window.speechSynthesis.cancel();
+                if (
+                    "speechSynthesis"
+                    in window
+                ) {{
 
-                const utterance =
-                    new SpeechSynthesisUtterance(
-                        message
+                    window.speechSynthesis.cancel();
+
+                    const speech =
+                        new SpeechSynthesisUtterance(
+                            message
+                        );
+
+                    speech.lang = "en-IN";
+
+                    speech.rate = 0.95;
+
+                    speech.pitch = 1.0;
+
+                    speech.volume = 1.0;
+
+                    window.speechSynthesis.speak(
+                        speech
                     );
 
-                utterance.lang = "en-IN";
+                }}
 
-                utterance.rate = 0.95;
+            }} catch (error) {{
 
-                utterance.pitch = 1.0;
-
-                utterance.volume = 1.0;
-
-                window.speechSynthesis.speak(
-                    utterance
+                console.log(
+                    "Speech error:",
+                    error
                 );
+
             }}
 
         }}
 
-        speakMessage();
+        speakNow();
 
     </script>
     """
@@ -268,13 +356,20 @@ def speak(text):
     if not text:
         return
 
-    if STREAMLIT_MODE:
+    if IS_WINDOWS and not IS_STREAMLIT:
+
+        speak_windows(text)
+
+    elif IS_STREAMLIT:
 
         speak_cloud(text)
 
     else:
 
-        speak_windows(text)
+        print(
+            "SAI:",
+            text
+        )
 
 
 # =========================================================
@@ -283,8 +378,9 @@ def speak(text):
 
 def get_time():
 
-    current_time = datetime.datetime.now().strftime(
-        "%I:%M %p"
+    current_time = (
+        datetime.datetime.now()
+        .strftime("%I:%M %p")
     )
 
     return (
@@ -377,21 +473,28 @@ def calculate(expression):
 
 
 # =========================================================
-# OPEN URL
+# CLOUD URL ACTION
 # =========================================================
 
-def open_url(url, spoken_name):
+def cloud_open_url(
+    url,
+    name
+):
 
-    if STREAMLIT_MODE:
+    if IS_STREAMLIT:
 
-        # Open from user's browser.
-        # Popup blockers may prevent a new tab,
-        # so navigate the parent browser if needed.
+        # Browser-side attempt.
+        # Browser popup policies can prevent
+        # automatic external tab opening.
+
+        safe_url = json.dumps(
+            url
+        )
 
         html = f"""
         <script>
 
-            const url = {json.dumps(url)};
+            const url = {safe_url};
 
             try {{
 
@@ -402,8 +505,7 @@ def open_url(url, spoken_name):
 
             }} catch (error) {{
 
-                window.parent.location.href =
-                    url;
+                console.log(error);
 
             }}
 
@@ -415,36 +517,50 @@ def open_url(url, spoken_name):
             height=1
         )
 
-    else:
-
-        webbrowser.open(
-            url
-        )
-
     return (
-        f"Opening {spoken_name}."
+        f"Opening {name}."
     )
 
 
 # =========================================================
-# YOUTUBE
+# OPEN YOUTUBE
 # =========================================================
 
 def open_youtube():
 
-    return open_url(
+    if IS_WINDOWS and not IS_STREAMLIT:
+
+        webbrowser.open(
+            "https://www.youtube.com"
+        )
+
+        return (
+            "Opening YouTube."
+        )
+
+    return cloud_open_url(
         "https://www.youtube.com",
         "YouTube"
     )
 
 
 # =========================================================
-# GOOGLE
+# OPEN GOOGLE
 # =========================================================
 
 def open_google():
 
-    return open_url(
+    if IS_WINDOWS and not IS_STREAMLIT:
+
+        webbrowser.open(
+            "https://www.google.com"
+        )
+
+        return (
+            "Opening Google."
+        )
+
+    return cloud_open_url(
         "https://www.google.com",
         "Google"
     )
@@ -461,7 +577,18 @@ def google_search(query):
         + urllib.parse.quote(query)
     )
 
-    return open_url(
+    if IS_WINDOWS and not IS_STREAMLIT:
+
+        webbrowser.open(
+            url
+        )
+
+        return (
+            f"Searching Google for "
+            f"{query}."
+        )
+
+    return cloud_open_url(
         url,
         f"Google search for {query}"
     )
@@ -479,7 +606,18 @@ def youtube_search(query):
         + urllib.parse.quote(query)
     )
 
-    return open_url(
+    if IS_WINDOWS and not IS_STREAMLIT:
+
+        webbrowser.open(
+            url
+        )
+
+        return (
+            f"Searching YouTube for "
+            f"{query}."
+        )
+
+    return cloud_open_url(
         url,
         f"YouTube search for {query}"
     )
@@ -506,6 +644,13 @@ def wikipedia_search(query):
 
         return result
 
+    except wikipedia.exceptions.DisambiguationError:
+
+        return (
+            "There are multiple Wikipedia "
+            "results. Please be more specific."
+        )
+
     except Exception:
 
         return (
@@ -522,13 +667,13 @@ def get_weather(city):
 
     try:
 
-        city_encoded = urllib.parse.quote(
-            city
+        encoded_city = (
+            urllib.parse.quote(city)
         )
 
         url = (
             f"https://wttr.in/"
-            f"{city_encoded}"
+            f"{encoded_city}"
             f"?format=j1"
         )
 
@@ -549,17 +694,21 @@ def get_weather(city):
             response.read().decode()
         )
 
-        current = data[
-            "current_condition"
-        ][0]
+        current = (
+            data[
+                "current_condition"
+            ][0]
+        )
 
-        temperature = current[
-            "temp_C"
-        ]
+        temperature = (
+            current["temp_C"]
+        )
 
-        description = current[
-            "weatherDesc"
-        ][0]["value"]
+        description = (
+            current[
+                "weatherDesc"
+            ][0]["value"]
+        )
 
         return (
             f"The current temperature "
@@ -578,10 +727,12 @@ def get_weather(city):
 
 
 # =========================================================
-# DOCUMENT READER
+# PDF READER
 # =========================================================
 
-def read_pdf_bytes(data):
+def read_pdf_bytes(
+    data
+):
 
     if PdfReader is None:
 
@@ -595,35 +746,51 @@ def read_pdf_bytes(data):
             io.BytesIO(data)
         )
 
-        text = []
+        pages = []
 
-        for page_number, page in enumerate(
+        for number, page in enumerate(
             reader.pages,
             start=1
         ):
 
-            page_text = (
+            text = (
                 page.extract_text()
                 or ""
             )
 
-            if page_text.strip():
+            if text.strip():
 
-                text.append(
-                    f"Page {page_number}. "
-                    f"{page_text}"
+                pages.append(
+                    f"Page {number}. "
+                    f"{text}"
                 )
 
-        return "\n".join(text)
+        if not pages:
 
-    except Exception as e:
+            return (
+                "I could not extract "
+                "text from this PDF."
+            )
+
+        return "\n".join(
+            pages
+        )
+
+    except Exception:
 
         return (
-            f"Could not read PDF. {e}"
+            "I could not read "
+            "this PDF."
         )
 
 
-def read_txt_bytes(data):
+# =========================================================
+# TXT READER
+# =========================================================
+
+def read_txt_bytes(
+    data
+):
 
     try:
 
@@ -635,16 +802,23 @@ def read_txt_bytes(data):
     except Exception:
 
         return (
-            "Could not read text file."
+            "I could not read "
+            "this text file."
         )
 
 
-def read_docx_bytes(data):
+# =========================================================
+# DOCX READER
+# =========================================================
+
+def read_docx_bytes(
+    data
+):
 
     if Document is None:
 
         return (
-            "Word document reader "
+            "Word document support "
             "is not installed."
         )
 
@@ -655,11 +829,15 @@ def read_docx_bytes(data):
         with tempfile.NamedTemporaryFile(
             delete=False,
             suffix=".docx"
-        ) as temp:
+        ) as temporary:
 
-            temp.write(data)
+            temporary.write(
+                data
+            )
 
-            temp_path = temp.name
+            temp_path = (
+                temporary.name
+            )
 
         document = Document(
             temp_path
@@ -667,7 +845,9 @@ def read_docx_bytes(data):
 
         paragraphs = []
 
-        for paragraph in document.paragraphs:
+        for paragraph in (
+            document.paragraphs
+        ):
 
             if paragraph.text.strip():
 
@@ -682,8 +862,8 @@ def read_docx_bytes(data):
     except Exception:
 
         return (
-            "Could not read the "
-            "Word document."
+            "I could not read "
+            "the Word document."
         )
 
     finally:
@@ -691,22 +871,27 @@ def read_docx_bytes(data):
         if temp_path:
 
             try:
-
-                os.unlink(temp_path)
-
+                os.remove(
+                    temp_path
+                )
             except Exception:
-
                 pass
 
+
+# =========================================================
+# DOCUMENT READER
+# =========================================================
 
 def read_document(
     filename,
     data
 ):
 
-    extension = os.path.splitext(
-        filename
-    )[1].lower()
+    extension = (
+        os.path.splitext(
+            filename
+        )[1].lower()
+    )
 
     if extension == ".pdf":
 
@@ -727,8 +912,8 @@ def read_document(
         )
 
     return (
-        "This document format "
-        "is not supported."
+        "I can currently read "
+        "PDF, TXT and DOCX files."
     )
 
 
@@ -758,14 +943,12 @@ def github_headers():
 # GITHUB REPOSITORIES
 # =========================================================
 
-def github_repositories():
+def github_list_repositories():
 
     if requests is None:
-
         return []
 
     if not GITHUB_USERNAME:
-
         return []
 
     try:
@@ -785,11 +968,13 @@ def github_repositories():
 
             return []
 
-        data = response.json()
+        repositories = (
+            response.json()
+        )
 
         return [
             repo["name"]
-            for repo in data
+            for repo in repositories
         ]
 
     except Exception:
@@ -801,17 +986,15 @@ def github_repositories():
 # GITHUB FILE LIST
 # =========================================================
 
-def github_files(
+def github_list_files(
     repository,
     path=""
 ):
 
     if requests is None:
-
         return []
 
     if not GITHUB_USERNAME:
-
         return []
 
     try:
@@ -850,7 +1033,6 @@ def github_read_file(
 ):
 
     if requests is None:
-
         return None
 
     try:
@@ -878,11 +1060,13 @@ def github_read_file(
             "encoding"
         ) == "base64":
 
-            content = base64.b64decode(
-                data["content"]
+            decoded = (
+                base64.b64decode(
+                    data["content"]
+                )
             )
 
-            return content.decode(
+            return decoded.decode(
                 "utf-8",
                 errors="ignore"
             )
@@ -901,7 +1085,7 @@ def github_read_file(
 # GITHUB UPLOAD
 # =========================================================
 
-def github_upload(
+def github_upload_file(
     repository,
     path,
     content
@@ -909,11 +1093,24 @@ def github_upload(
 
     if requests is None:
 
-        return False
+        return (
+            False,
+            "Requests library is unavailable."
+        )
+
+    if not GITHUB_USERNAME:
+
+        return (
+            False,
+            "GitHub username is not configured."
+        )
 
     if not GITHUB_TOKEN:
 
-        return False
+        return (
+            False,
+            "GitHub token is not configured."
+        )
 
     try:
 
@@ -958,37 +1155,51 @@ def github_upload(
             timeout=15
         )
 
-        return response.status_code in [
+        if response.status_code in [
             200,
             201
-        ]
+        ]:
+
+            return (
+                True,
+                "File uploaded successfully."
+            )
+
+        return (
+            False,
+            "GitHub upload failed."
+        )
 
     except Exception:
 
-        return False
+        return (
+            False,
+            "GitHub upload failed."
+        )
 
 
 # =========================================================
 # WINDOWS APPLICATIONS
 # =========================================================
 
-def windows_open_application(
-    app
+def open_windows_application(
+    application
 ):
 
-    if not WINDOWS_MODE:
+    if not IS_WINDOWS:
 
         return (
-            "That application is "
-            "available on your "
-            "Windows computer."
+            "This application is available "
+            "on your Windows computer."
         )
 
-    app = app.lower()
+    application = (
+        application.lower()
+    )
 
     try:
 
-        if "notepad" in app:
+        if "notepad" in application:
 
             subprocess.Popen(
                 ["notepad.exe"]
@@ -998,7 +1209,7 @@ def windows_open_application(
                 "Opening Notepad."
             )
 
-        if "calculator" in app:
+        if "calculator" in application:
 
             subprocess.Popen(
                 ["calc.exe"]
@@ -1008,10 +1219,7 @@ def windows_open_application(
                 "Opening Calculator."
             )
 
-        if (
-            "chrome" in app
-            or "browser" in app
-        ):
+        if "chrome" in application:
 
             subprocess.Popen(
                 [
@@ -1026,7 +1234,7 @@ def windows_open_application(
                 "Opening Chrome."
             )
 
-        if "explorer" in app:
+        if "explorer" in application:
 
             subprocess.Popen(
                 ["explorer.exe"]
@@ -1055,7 +1263,7 @@ def windows_open_application(
 
 def open_whatsapp():
 
-    if WINDOWS_MODE:
+    if IS_WINDOWS:
 
         try:
 
@@ -1073,10 +1281,9 @@ def open_whatsapp():
             )
 
         except Exception:
-
             pass
 
-    return open_url(
+    return cloud_open_url(
         "https://web.whatsapp.com",
         "WhatsApp Web"
     )
@@ -1086,13 +1293,12 @@ def open_whatsapp():
 # WINDOWS SCREENSHOT
 # =========================================================
 
-def windows_screenshot():
+def take_windows_screenshot():
 
-    if not WINDOWS_MODE:
+    if not IS_WINDOWS:
 
         return (
             "Screenshot is available "
-            "when SAI Voice OS is running "
             "on your Windows computer."
         )
 
@@ -1100,7 +1306,7 @@ def windows_screenshot():
 
         return (
             "Screenshot support "
-            "is not installed."
+            "is not available."
         )
 
     try:
@@ -1129,11 +1335,12 @@ def windows_screenshot():
 
         image = pyautogui.screenshot()
 
-        image.save(path)
+        image.save(
+            path
+        )
 
         return (
-            "Screenshot taken "
-            "successfully."
+            "Screenshot taken successfully."
         )
 
     except Exception:
@@ -1148,9 +1355,9 @@ def windows_screenshot():
 # WINDOWS LOCAL FILES
 # =========================================================
 
-def get_local_files():
+def get_windows_documents():
 
-    if not WINDOWS_MODE:
+    if not IS_WINDOWS:
 
         return []
 
@@ -1170,16 +1377,17 @@ def get_local_files():
 
 
 # =========================================================
-# READ LOCAL FILE
+# READ WINDOWS LOCAL FILE
 # =========================================================
 
-def read_local_file(filename):
+def read_windows_file(
+    filename
+):
 
-    if not WINDOWS_MODE:
+    if not IS_WINDOWS:
 
         return (
             "Local files are available "
-            "when SAI Voice OS is running "
             "on your Windows computer."
         )
 
@@ -1195,15 +1403,17 @@ def read_local_file(filename):
     if not os.path.exists(path):
 
         return (
-            "I could not find that file "
-            "in your Documents folder."
+            "I could not find "
+            "that file."
         )
 
     try:
 
-        extension = os.path.splitext(
-            filename
-        )[1].lower()
+        extension = (
+            os.path.splitext(
+                filename
+            )[1].lower()
+        )
 
         if extension == ".txt":
 
@@ -1252,16 +1462,18 @@ def read_local_file(filename):
 
 
 # =========================================================
-# WINDOWS NOTES
+# WINDOWS NOTE
 # =========================================================
 
-def save_local_note(note):
+def save_windows_note(
+    note
+):
 
-    if not WINDOWS_MODE:
+    if not IS_WINDOWS:
 
         return (
             "Notes are available "
-            "in Windows local mode."
+            "on your Windows computer."
         )
 
     try:
@@ -1280,8 +1492,11 @@ def save_local_note(note):
             "SAI_Notes.txt"
         )
 
-        timestamp = datetime.datetime.now().strftime(
-            "%Y-%m-%d %H:%M"
+        timestamp = (
+            datetime.datetime.now()
+            .strftime(
+                "%Y-%m-%d %H:%M"
+            )
         )
 
         with open(
@@ -1304,7 +1519,7 @@ def save_local_note(note):
 
         return (
             "I could not save "
-            "the note."
+            "your note."
         )
 
 
@@ -1351,6 +1566,11 @@ def listen_windows():
             )
         )
 
+        print(
+            "Recognized command:",
+            command
+        )
+
         return command.lower()
 
     except sr.UnknownValueError:
@@ -1371,28 +1591,30 @@ def listen_windows():
             "service is unavailable."
         )
 
-    except Exception as e:
+    except Exception as error:
 
         print(
             "Microphone error:",
-            e
+            error
         )
 
     return None
 
 
 # =========================================================
-# EXTRACT QUERY
+# COMMAND PREFIX HELPER
 # =========================================================
 
-def remove_prefix(
+def extract_after(
     command,
     prefixes
 ):
 
     for prefix in prefixes:
 
-        if command.startswith(prefix):
+        if command.startswith(
+            prefix
+        ):
 
             return command[
                 len(prefix):
@@ -1402,10 +1624,12 @@ def remove_prefix(
 
 
 # =========================================================
-# COMMAND ENGINE
+# MAIN COMMAND ENGINE
 # =========================================================
 
-def process_command(command):
+def process_command(
+    command
+):
 
     if not command:
 
@@ -1414,12 +1638,16 @@ def process_command(command):
         )
 
 
-    command = command.lower().strip()
+    command = (
+        command
+        .lower()
+        .strip()
+    )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # EXIT
-    # -----------------------------------------------------
+    # =====================================================
 
     if command in [
         "exit",
@@ -1432,33 +1660,43 @@ def process_command(command):
         return "__EXIT__"
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # TIME
-    # -----------------------------------------------------
+    # =====================================================
 
     if (
-        "what time" in command
-        or command == "time"
+        command == "time"
+        or
+        "what time is it"
+        in command
+        or
+        "what is the time"
+        in command
     ):
 
         return get_time()
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # DATE
-    # -----------------------------------------------------
+    # =====================================================
 
     if (
-        "what is the date" in command
-        or command == "date"
+        command == "date"
+        or
+        "what is the date"
+        in command
+        or
+        "today's date"
+        in command
     ):
 
         return get_date()
 
 
-    # -----------------------------------------------------
-    # YOUTUBE
-    # -----------------------------------------------------
+    # =====================================================
+    # OPEN YOUTUBE
+    # =====================================================
 
     if any(
         phrase in command
@@ -1472,9 +1710,9 @@ def process_command(command):
         return open_youtube()
 
 
-    # -----------------------------------------------------
-    # GOOGLE
-    # -----------------------------------------------------
+    # =====================================================
+    # OPEN GOOGLE
+    # =====================================================
 
     if any(
         phrase in command
@@ -1488,16 +1726,17 @@ def process_command(command):
         return open_google()
 
 
-    # -----------------------------------------------------
-    # GOOGLE SEARCH
-    # -----------------------------------------------------
+    # =====================================================
+    # SEARCH GOOGLE
+    # =====================================================
 
-    query = remove_prefix(
+    query = extract_after(
         command,
         [
             "search google for",
             "search google",
-            "google search for"
+            "google search for",
+            "google search"
         ]
     )
 
@@ -1508,11 +1747,11 @@ def process_command(command):
         )
 
 
-    # -----------------------------------------------------
-    # YOUTUBE SEARCH
-    # -----------------------------------------------------
+    # =====================================================
+    # SEARCH YOUTUBE
+    # =====================================================
 
-    query = remove_prefix(
+    query = extract_after(
         command,
         [
             "search youtube for",
@@ -1529,15 +1768,16 @@ def process_command(command):
         )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # WIKIPEDIA
-    # -----------------------------------------------------
+    # =====================================================
 
-    query = remove_prefix(
+    query = extract_after(
         command,
         [
-            "wikipedia",
-            "search wikipedia for"
+            "search wikipedia for",
+            "search wikipedia",
+            "wikipedia"
         ]
     )
 
@@ -1548,33 +1788,34 @@ def process_command(command):
         )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # WEATHER
-    # -----------------------------------------------------
+    # =====================================================
 
     if "weather" in command:
 
         city = "Guntur"
 
         match = re.search(
-            r"weather(?:\s+in)?\s+(.+)",
+            r"weather\s+(?:in\s+)?(.+)",
             command
         )
 
         if match:
 
-            city = match.group(
-                1
-            ).strip()
+            city = (
+                match.group(1)
+                .strip()
+            )
 
         return get_weather(
             city
         )
 
 
-    # -----------------------------------------------------
-    # CALCULATOR
-    # -----------------------------------------------------
+    # =====================================================
+    # CALCULATE
+    # =====================================================
 
     if command.startswith(
         "calculate"
@@ -1589,17 +1830,18 @@ def process_command(command):
         )
 
 
+    # =====================================================
+    # OPEN CALCULATOR
+    # =====================================================
+
     if (
         "open calculator"
         in command
-        or
-        "open the calculator"
-        in command
     ):
 
-        if WINDOWS_MODE:
+        if IS_WINDOWS:
 
-            return windows_open_application(
+            return open_windows_application(
                 "calculator"
             )
 
@@ -1610,37 +1852,75 @@ def process_command(command):
         )
 
 
-    # -----------------------------------------------------
-    # NOTEPAD
-    # -----------------------------------------------------
+    # =====================================================
+    # OPEN NOTEPAD
+    # =====================================================
 
     if (
         "open notepad"
         in command
     ):
 
-        return windows_open_application(
-            "notepad"
+        if IS_WINDOWS:
+
+            return open_windows_application(
+                "notepad"
+            )
+
+        return (
+            "Notepad is available "
+            "on your Windows computer."
         )
 
 
-    # -----------------------------------------------------
-    # CHROME
-    # -----------------------------------------------------
+    # =====================================================
+    # OPEN CHROME
+    # =====================================================
 
     if (
         "open chrome"
         in command
     ):
 
-        return windows_open_application(
-            "chrome"
+        if IS_WINDOWS:
+
+            return open_windows_application(
+                "chrome"
+            )
+
+        return (
+            "Chrome is available "
+            "on your Windows computer."
         )
 
 
-    # -----------------------------------------------------
+    # =====================================================
+    # OPEN FILE EXPLORER
+    # =====================================================
+
+    if (
+        "open file explorer"
+        in command
+        or
+        "open explorer"
+        in command
+    ):
+
+        if IS_WINDOWS:
+
+            return open_windows_application(
+                "explorer"
+            )
+
+        return (
+            "File Explorer is available "
+            "on your Windows computer."
+        )
+
+
+    # =====================================================
     # WHATSAPP
-    # -----------------------------------------------------
+    # =====================================================
 
     if (
         "open whatsapp"
@@ -1650,9 +1930,9 @@ def process_command(command):
         return open_whatsapp()
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # SCREENSHOT
-    # -----------------------------------------------------
+    # =====================================================
 
     if (
         "take screenshot"
@@ -1661,12 +1941,12 @@ def process_command(command):
         command == "screenshot"
     ):
 
-        return windows_screenshot()
+        return take_windows_screenshot()
 
 
-    # -----------------------------------------------------
-    # LOCAL FILES
-    # -----------------------------------------------------
+    # =====================================================
+    # LIST LOCAL FILES
+    # =====================================================
 
     if any(
         phrase in command
@@ -1679,77 +1959,45 @@ def process_command(command):
         ]
     ):
 
-        files = get_local_files()
+        files = (
+            get_windows_documents()
+        )
 
         if not files:
 
             return (
-                "I could not find any "
-                "files in your Documents folder."
+                "I could not find "
+                "any files."
             )
 
-        readable_files = files[:10]
+        files = files[:10]
 
         return (
-            f"I found {len(files)} files. "
-            f"The first files are "
-            + ", ".join(
-                readable_files
-            )
+            "I found "
+            f"{len(files)} files. "
+            "Some of them are "
+            + ", ".join(files)
         )
 
 
-    # -----------------------------------------------------
-    # READ LOCAL FILE
-    # -----------------------------------------------------
-
-    match = re.search(
-        r"(?:read|open)\s+(?:file\s+)?(.+)",
-        command
-    )
-
-    if match:
-
-        filename = match.group(
-            1
-        ).strip()
-
-        # Don't interpret normal commands as filenames
-        if not filename.startswith(
-            (
-                "youtube",
-                "google",
-                "calculator",
-                "notepad",
-                "whatsapp"
-            )
-        ):
-
-            return read_local_file(
-                filename
-            )
-
-
-    # -----------------------------------------------------
+    # =====================================================
     # GITHUB REPOSITORIES
-    # -----------------------------------------------------
+    # =====================================================
 
-    if (
-        "list github repositories"
-        in command
-        or
-        "show my github repositories"
-        in command
-        or
-        "my github repositories"
-        in command
+    if any(
+        phrase in command
+        for phrase in [
+            "list github repositories",
+            "show github repositories",
+            "my github repositories"
+        ]
     ):
 
-        repos = (
-            github_repositories()
+        repositories = (
+            github_list_repositories()
         )
 
-        if not repos:
+        if not repositories:
 
             return (
                 "I could not retrieve "
@@ -1757,85 +2005,44 @@ def process_command(command):
             )
 
         return (
-            "Your GitHub repositories are "
-            + ", ".join(repos)
-        )
-
-
-    # -----------------------------------------------------
-    # GITHUB FILES
-    # -----------------------------------------------------
-
-    match = re.search(
-        r"(?:list|show)\s+files\s+in\s+github\s+(.+)",
-        command
-    )
-
-    if match:
-
-        repository = match.group(
-            1
-        ).strip()
-
-        files = github_files(
-            repository
-        )
-
-        if not files:
-
-            return (
-                "I could not find files "
-                "in that repository."
+            "Your GitHub repositories "
+            "are "
+            + ", ".join(
+                repositories
             )
-
-        names = []
-
-        for item in files[:10]:
-
-            names.append(
-                item.get(
-                    "name",
-                    "unknown"
-                )
-            )
-
-        return (
-            "The files are "
-            + ", ".join(names)
         )
 
 
-    # -----------------------------------------------------
-    # UNKNOWN
-    # -----------------------------------------------------
+    # =====================================================
+    # UNKNOWN COMMAND
+    # =====================================================
 
     return (
-        "I do not understand that "
-        "command yet."
+        "I do not understand "
+        "that command yet."
     )
 
 
 # =========================================================
-# CLOUD VOICE PROCESSING
+# CLOUD AUDIO → TEXT
 # =========================================================
 
-def process_cloud_audio(
+def recognize_cloud_audio(
     audio_bytes
 ):
 
     if sr is None:
 
-        return (
-            "Speech recognition "
-            "is not installed."
-        )
+        return None
+
+    recognizer = sr.Recognizer()
 
     try:
 
-        recognizer = sr.Recognizer()
-
         with sr.AudioFile(
-            io.BytesIO(audio_bytes)
+            io.BytesIO(
+                audio_bytes
+            )
         ) as source:
 
             audio = recognizer.record(
@@ -1850,43 +2057,65 @@ def process_cloud_audio(
             )
         )
 
-        response = process_command(
-            command
-        )
-
-        if response == "__EXIT__":
-
-            return (
-                "SAI Voice OS is "
-                "going offline."
-            )
-
-        return response
+        return command.lower()
 
     except sr.UnknownValueError:
 
-        return (
+        return None
+
+    except sr.RequestError:
+
+        return None
+
+    except Exception:
+
+        return None
+
+
+# =========================================================
+# CLOUD VOICE COMMAND
+# =========================================================
+
+def process_cloud_voice(
+    audio_bytes
+):
+
+    command = recognize_cloud_audio(
+        audio_bytes
+    )
+
+    if not command:
+
+        response = (
             "Sorry, I could not "
             "understand you."
         )
 
-    except sr.RequestError:
-
-        return (
-            "Speech recognition "
-            "service is unavailable."
+        speak_cloud(
+            response
         )
 
-    except Exception as e:
+        return
 
-        return (
-            "I could not process "
-            "your voice command."
+
+    response = process_command(
+        command
+    )
+
+    if response == "__EXIT__":
+
+        response = (
+            "SAI Voice OS is "
+            "going offline."
         )
+
+    speak_cloud(
+        response
+    )
 
 
 # =========================================================
-# STREAMLIT UI
+# STREAMLIT APP
 # =========================================================
 
 def streamlit_app():
@@ -1898,9 +2127,9 @@ def streamlit_app():
     )
 
 
-    # -----------------------------------------------------
-    # MINIMAL UI
-    # -----------------------------------------------------
+    # =====================================================
+    # HIDE NORMAL STREAMLIT UI
+    # =====================================================
 
     st.markdown(
         """
@@ -1918,56 +2147,30 @@ def streamlit_app():
             visibility: hidden;
         }
 
-        .stApp {
-            text-align: center;
-        }
-
         </style>
         """,
         unsafe_allow_html=True
     )
 
 
-    # -----------------------------------------------------
-    # VOICE ONLY INTRO
-    # -----------------------------------------------------
-
-    if "started" not in st.session_state:
-
-        st.session_state.started = False
-
-
-    if "last_response" not in st.session_state:
-
-        st.session_state.last_response = ""
-
-
-    # -----------------------------------------------------
-    # MICROPHONE
-    # -----------------------------------------------------
+    # =====================================================
+    # VOICE INPUT ONLY
+    # =====================================================
 
     audio = st.audio_input(
-        "🎙️"
+        "Speak to SAI"
     )
 
 
     if audio is not None:
 
-        response = process_cloud_audio(
+        process_cloud_voice(
             audio.getvalue()
-        )
-
-        st.session_state.last_response = (
-            response
-        )
-
-        speak_cloud(
-            response
         )
 
 
 # =========================================================
-# WINDOWS MODE
+# WINDOWS LOCAL APPLICATION
 # =========================================================
 
 def windows_app():
@@ -2009,15 +2212,34 @@ def windows_app():
 
 
 # =========================================================
-# MAIN
+# ENTRY POINT
 # =========================================================
 
 if __name__ == "__main__":
 
-    if STREAMLIT_MODE:
+    # -----------------------------------------------------
+    # STREAMLIT CLOUD
+    # -----------------------------------------------------
+
+    if IS_STREAMLIT:
 
         streamlit_app()
 
-    else:
+    # -----------------------------------------------------
+    # WINDOWS LOCAL
+    # -----------------------------------------------------
+
+    elif IS_WINDOWS:
 
         windows_app()
+
+    # -----------------------------------------------------
+    # OTHER
+    # -----------------------------------------------------
+
+    else:
+
+        print(
+            "SAI Voice OS requires "
+            "Windows or Streamlit."
+        )
