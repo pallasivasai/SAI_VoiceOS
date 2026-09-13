@@ -1,38 +1,68 @@
-"""
-SAI VoiceOS - Complete single-file version
+# ============================================================
+# SAI VOICEOS
+# ONE FILE - ALWAYS LISTENING VOICE-FIRST COMPUTER
+# ============================================================
+#
+# SAI stays ON until the user says:
+#
+#   "off"
+#   "turn off"
+#   "shutdown SAI"
+#   "exit SAI"
+#
+# Main capabilities:
+#
+# 1. Always listening
+# 2. Voice -> Text
+# 3. Text -> Voice
+# 4. Internet answers
+# 5. Internet file download
+# 6. GitHub file fetching
+# 7. GitHub PDF reading
+# 8. Local PDF reading
+# 9. PDF search
+# 10. Calculator
+# 11. Browser
+# 12. YouTube
+# 13. WhatsApp
+# 14. Notepad
+# 15. Screenshot
+# 16. Notes
+# 17. Local file search
+# 18. Weather
+# 19. Function registry
+#
+# ============================================================
 
-Cloud:
-    streamlit run sai_voiceos.py
 
-Local Windows:
-    python sai_voiceos.py
-
-Cloud mode handles Internet, GitHub and PDF files.
-Local mode additionally handles microphone, TTS, Windows apps,
-screenshots, local files and voice commands.
-"""
+# ============================================================
+# IMPORTS
+# ============================================================
 
 import os
-import io
 import re
+import io
 import json
 import base64
+import queue
 import random
+import threading
 import datetime
-import subprocess
 import urllib.parse
 import urllib.request
-import webbrowser as wb
+import webbrowser
+import subprocess
 from pathlib import Path
 
-import requests
-from pypdf import PdfReader
 
-# Optional local-only packages. The cloud app can start without them.
+# ============================================================
+# OPTIONAL / EXTERNAL LIBRARIES
+# ============================================================
+
 try:
-    import streamlit as st
+    import requests
 except ImportError:
-    st = None
+    requests = None
 
 try:
     import pyttsx3
@@ -55,6 +85,11 @@ except ImportError:
     wav = None
 
 try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
+try:
     import pyautogui
 except ImportError:
     pyautogui = None
@@ -64,151 +99,1398 @@ try:
 except ImportError:
     pyjokes = None
 
+try:
+    import tkinter as tk
+    from tkinter import ttk
+except ImportError:
+    tk = None
+    ttk = None
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
 APP_NAME = "SAI VoiceOS"
 
-GITHUB_TOKEN = os.getenv("SAI_GITHUB_TOKEN", "")
-GITHUB_REPOSITORY = os.getenv(
-    "SAI_GITHUB_REPOSITORY",
-    "YOUR_USERNAME/YOUR_REPOSITORY"
+HOME = Path.home()
+
+DOWNLOADS = HOME / "Downloads"
+DESKTOP = HOME / "Desktop"
+PICTURES = HOME / "Pictures"
+
+DOWNLOADS.mkdir(
+    parents=True,
+    exist_ok=True
 )
-GITHUB_BRANCH = os.getenv("SAI_GITHUB_BRANCH", "main")
 
+DESKTOP.mkdir(
+    parents=True,
+    exist_ok=True
+)
 
-def get_github_config():
-    token = GITHUB_TOKEN
-    repo = GITHUB_REPOSITORY
-    branch = GITHUB_BRANCH
-
-    if st is not None:
-        try:
-            token = token or st.secrets.get("GITHUB_TOKEN", "")
-            repo = st.secrets.get("GITHUB_REPOSITORY", repo)
-            branch = st.secrets.get("GITHUB_BRANCH", branch)
-        except Exception:
-            pass
-
-    return token, repo, branch
+PICTURES.mkdir(
+    parents=True,
+    exist_ok=True
+)
 
 
 # ============================================================
-# VOICE
+# GITHUB CONFIGURATION
 # ============================================================
+#
+# Public GitHub files can work without token.
+#
+# Private repositories need:
+#
+# setx SAI_GITHUB_TOKEN "YOUR_TOKEN"
+#
+# Optional default repository:
+#
+# setx SAI_GITHUB_REPOSITORY "username/repository"
+#
+# ============================================================
+
+GITHUB_TOKEN = os.getenv(
+    "SAI_GITHUB_TOKEN",
+    ""
+)
+
+DEFAULT_GITHUB_REPOSITORY = os.getenv(
+    "SAI_GITHUB_REPOSITORY",
+    ""
+)
+
+DEFAULT_GITHUB_BRANCH = os.getenv(
+    "SAI_GITHUB_BRANCH",
+    "main"
+)
+
+
+# ============================================================
+# GLOBAL STATE
+# ============================================================
+
+SAI_RUNNING = True
+
+ui_queue = queue.Queue()
 
 engine = None
 
 if pyttsx3 is not None:
+
     try:
+
         engine = pyttsx3.init()
-        voices = engine.getProperty("voices")
-        if voices:
-            engine.setProperty("voice", voices[0].id)
-        engine.setProperty("rate", 150)
-        engine.setProperty("volume", 1.0)
+
+        engine.setProperty(
+            "rate",
+            150
+        )
+
+        engine.setProperty(
+            "volume",
+            1.0
+        )
+
     except Exception:
+
         engine = None
 
 
+# ============================================================
+# UI
+# ============================================================
+
+class SAIInterface:
+
+    def __init__(self):
+
+        self.root = None
+        self.output = None
+        self.status = None
+        self.input_box = None
+
+        if tk is None:
+            return
+
+        self.root = tk.Tk()
+
+        self.root.title(
+            "SAI VoiceOS"
+        )
+
+        self.root.geometry(
+            "1000x700"
+        )
+
+        self.root.protocol(
+            "WM_DELETE_WINDOW",
+            self.close
+        )
+
+        self.build()
+
+        self.root.after(
+            100,
+            self.process_queue
+        )
+
+
+    def build(self):
+
+        title = tk.Label(
+            self.root,
+            text="SAI VoiceOS",
+            font=("Arial", 24, "bold")
+        )
+
+        title.pack(
+            pady=10
+        )
+
+        self.status = tk.Label(
+            self.root,
+            text="● ALWAYS LISTENING",
+            font=("Arial", 12, "bold")
+        )
+
+        self.status.pack(
+            pady=5
+        )
+
+        frame = tk.Frame(
+            self.root
+        )
+
+        frame.pack(
+            fill="both",
+            expand=True,
+            padx=15,
+            pady=10
+        )
+
+        scrollbar = tk.Scrollbar(
+            frame
+        )
+
+        scrollbar.pack(
+            side="right",
+            fill="y"
+        )
+
+        self.output = tk.Text(
+            frame,
+            wrap="word",
+            font=("Consolas", 13),
+            yscrollcommand=scrollbar.set,
+            state="disabled"
+        )
+
+        self.output.pack(
+            fill="both",
+            expand=True
+        )
+
+        scrollbar.config(
+            command=self.output.yview
+        )
+
+        bottom = tk.Frame(
+            self.root
+        )
+
+        bottom.pack(
+            fill="x",
+            padx=15,
+            pady=10
+        )
+
+        self.input_box = tk.Entry(
+            bottom,
+            font=("Arial", 14)
+        )
+
+        self.input_box.pack(
+            side="left",
+            fill="x",
+            expand=True
+        )
+
+        self.input_box.bind(
+            "<Return>",
+            self.submit_text
+        )
+
+        button = tk.Button(
+            bottom,
+            text="Send",
+            font=("Arial", 12),
+            command=self.submit_text
+        )
+
+        button.pack(
+            side="right",
+            padx=5
+        )
+
+
+    def add(self, speaker, text):
+
+        message = (
+            f"\n{speaker}\n"
+            f"{text}\n"
+            f"{'-' * 70}\n"
+        )
+
+        if self.output is not None:
+
+            self.output.config(
+                state="normal"
+            )
+
+            self.output.insert(
+                "end",
+                message
+            )
+
+            self.output.see(
+                "end"
+            )
+
+            self.output.config(
+                state="disabled"
+            )
+
+        else:
+
+            print(message)
+
+
+    def process_queue(self):
+
+        try:
+
+            while True:
+
+                item = ui_queue.get_nowait()
+
+                if item[0] == "sai":
+
+                    self.add(
+                        "SAI",
+                        item[1]
+                    )
+
+                elif item[0] == "user":
+
+                    self.add(
+                        "YOU",
+                        item[1]
+                    )
+
+                elif item[0] == "status":
+
+                    if self.status:
+
+                        self.status.config(
+                            text=item[1]
+                        )
+
+                elif item[0] == "close":
+
+                    self.root.destroy()
+
+                    return
+
+        except queue.Empty:
+
+            pass
+
+        if self.root:
+
+            self.root.after(
+                100,
+                self.process_queue
+            )
+
+
+    def submit_text(self, event=None):
+
+        if not self.input_box:
+
+            return
+
+        text = self.input_box.get().strip()
+
+        self.input_box.delete(
+            0,
+            "end"
+        )
+
+        if text:
+
+            ui_queue.put(
+                (
+                    "user",
+                    text
+                )
+            )
+
+            threading.Thread(
+                target=process_command,
+                args=(text,),
+                daemon=True
+            ).start()
+
+
+    def close(self):
+
+        global SAI_RUNNING
+
+        SAI_RUNNING = False
+
+        ui_queue.put(
+            (
+                "close",
+                ""
+            )
+        )
+
+
+    def run(self):
+
+        if self.root:
+
+            self.root.mainloop()
+
+
+# ============================================================
+# UI INSTANCE
+# ============================================================
+
+UI = SAIInterface()
+
+
+# ============================================================
+# SPEAK
+# ============================================================
+
 def speak(text):
+
     if not text:
         return
 
     text = str(text)
-    print("SAI:", text)
 
-    if engine is not None:
-        try:
-            engine.say(text)
-            engine.runAndWait()
-        except Exception:
-            pass
+    ui_queue.put(
+        (
+            "sai",
+            text
+        )
+    )
+
+    print(
+        "SAI:",
+        text
+    )
+
+    if engine is None:
+
+        return
+
+    try:
+
+        engine.say(
+            text
+        )
+
+        engine.runAndWait()
+
+    except Exception as exc:
+
+        print(
+            "TTS error:",
+            exc
+        )
 
 
-def take_command():
-    if sd is None or sr is None or wav is None:
-        speak("Local microphone is not available in this environment.")
+# ============================================================
+# STATUS
+# ============================================================
+
+def set_status(text):
+
+    ui_queue.put(
+        (
+            "status",
+            text
+        )
+    )
+
+
+# ============================================================
+# ALWAYS LISTENING
+# ============================================================
+
+def listen_once():
+
+    if (
+        sd is None
+        or sr is None
+        or wav is None
+    ):
+
         return None
 
     recognizer = sr.Recognizer()
-    rate = 44100
-    seconds = 5
 
-    print("Listening...")
+    sample_rate = 44100
+
+    # Small chunks make SAI continuously listen.
+    seconds = 4
 
     try:
+
+        set_status(
+            "● ALWAYS LISTENING"
+        )
+
         recording = sd.rec(
-            int(seconds * rate),
-            samplerate=rate,
+            int(
+                seconds
+                * sample_rate
+            ),
+            samplerate=sample_rate,
             channels=1,
             dtype="int16"
         )
+
         sd.wait()
 
         buffer = io.BytesIO()
-        wav.write(buffer, rate, recording)
+
+        wav.write(
+            buffer,
+            sample_rate,
+            recording
+        )
+
         buffer.seek(0)
 
-        with sr.AudioFile(buffer) as source:
-            audio = recognizer.record(source)
+        with sr.AudioFile(
+            buffer
+        ) as source:
+
+            audio = recognizer.record(
+                source
+            )
 
         query = recognizer.recognize_google(
             audio,
             language="en-in"
-        ).lower().strip()
+        )
 
-        print("YOU:", query)
-        return query
+        query = query.lower().strip()
+
+        if query:
+
+            ui_queue.put(
+                (
+                    "user",
+                    query
+                )
+            )
+
+            return query
 
     except sr.UnknownValueError:
-        speak("Sorry, I could not understand that.")
-    except sr.RequestError:
-        speak("Speech recognition service is unavailable.")
+
+        pass
+
+    except sr.RequestError as exc:
+
+        print(
+            "Speech service error:",
+            exc
+        )
+
     except Exception as exc:
-        print("Microphone error:", exc)
+
+        print(
+            "Microphone error:",
+            exc
+        )
+
+    return None
+
+
+def voice_loop():
+
+    global SAI_RUNNING
+
+    while SAI_RUNNING:
+
+        query = listen_once()
+
+        if not SAI_RUNNING:
+
+            break
+
+        if query:
+
+            process_command(
+                query
+            )
+
+
+# ============================================================
+# INTERNET SEARCH
+# ============================================================
+
+def internet_search(query):
+
+    query = query.strip()
+
+    if not query:
+
+        return
+
+    encoded = urllib.parse.quote_plus(
+        query
+    )
+
+    url = (
+        "https://www.google.com/search?q="
+        + encoded
+    )
+
+    try:
+
+        webbrowser.open(
+            url
+        )
+
+        speak(
+            f"I opened internet search results for {query}."
+        )
+
+    except Exception:
+
+        speak(
+            "I could not open internet search."
+        )
+
+
+# ============================================================
+# INTERNET ANSWER
+# ============================================================
+
+def internet_answer(query):
+
+    """
+    First try DuckDuckGo Instant Answer API.
+    If no direct answer exists, open web search.
+    """
+
+    query = query.strip()
+
+    if not query:
+
+        return
+
+    speak(
+        f"Checking the internet for {query}."
+    )
+
+    try:
+
+        encoded = urllib.parse.quote_plus(
+            query
+        )
+
+        url = (
+            "https://api.duckduckgo.com/"
+            "?q="
+            + encoded
+            + "&format=json"
+            + "&no_html=1"
+            + "&skip_disambig=1"
+        )
+
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent":
+                "SAI-VoiceOS/1.0"
+            }
+        )
+
+        with urllib.request.urlopen(
+            request,
+            timeout=10
+        ) as response:
+
+            data = json.loads(
+                response.read().decode(
+                    "utf-8"
+                )
+            )
+
+        answer = (
+            data.get(
+                "AbstractText",
+                ""
+            )
+            or ""
+        ).strip()
+
+        if answer:
+
+            speak(
+                answer[:1800]
+            )
+
+            return
+
+        related = []
+
+        for item in data.get(
+            "RelatedTopics",
+            []
+        )[:5]:
+
+            if (
+                isinstance(
+                    item,
+                    dict
+                )
+                and item.get("Text")
+            ):
+
+                related.append(
+                    item["Text"]
+                )
+
+        if related:
+
+            speak(
+                " ".join(
+                    related
+                )[:1800]
+            )
+
+            return
+
+    except Exception as exc:
+
+        print(
+            "Internet answer error:",
+            exc
+        )
+
+    # Fallback
+    internet_search(
+        query
+    )
+
+
+# ============================================================
+# INTERNET FILE DOWNLOAD
+# ============================================================
+
+def download_from_internet(
+    url,
+    filename=None
+):
+
+    try:
+
+        url = url.strip()
+
+        if not filename:
+
+            parsed = urllib.parse.urlparse(
+                url
+            )
+
+            filename = Path(
+                parsed.path
+            ).name
+
+        if not filename:
+
+            filename = (
+                "sai_download"
+            )
+
+        destination = (
+            DOWNLOADS
+            / filename
+        )
+
+        speak(
+            "Downloading the file from the internet."
+        )
+
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent":
+                "Mozilla/5.0"
+            }
+        )
+
+        with urllib.request.urlopen(
+            request,
+            timeout=60
+        ) as response:
+
+            data = response.read()
+
+        destination.write_bytes(
+            data
+        )
+
+        speak(
+            f"Downloaded successfully to {destination}."
+        )
+
+        return str(
+            destination
+        )
+
+    except Exception as exc:
+
+        print(
+            "Download error:",
+            exc
+        )
+
+        speak(
+            "I could not download that file."
+        )
+
+        return None
+
+
+# ============================================================
+# GITHUB URL PARSER
+# ============================================================
+
+def parse_github_path(
+    github_path
+):
+
+    """
+    Supports:
+
+    owner/repo/file.pdf
+
+    owner/repo/folder/file.pdf
+
+    https://github.com/owner/repo/blob/main/file.pdf
+
+    https://github.com/owner/repo/raw/main/file.pdf
+
+    https://raw.githubusercontent.com/owner/repo/main/file.pdf
+    """
+
+    github_path = github_path.strip()
+
+    # Raw GitHub URL
+    if (
+        github_path.startswith(
+            "https://raw.githubusercontent.com/"
+        )
+    ):
+
+        parts = urllib.parse.urlparse(
+            github_path
+        ).path.strip("/").split("/")
+
+        if len(parts) >= 4:
+
+            owner = parts[0]
+            repo = parts[1]
+            branch = parts[2]
+            path = "/".join(
+                parts[3:]
+            )
+
+            return (
+                owner,
+                repo,
+                branch,
+                path
+            )
+
+    # Normal GitHub URL
+    if (
+        github_path.startswith(
+            "https://github.com/"
+        )
+    ):
+
+        parts = urllib.parse.urlparse(
+            github_path
+        ).path.strip("/").split("/")
+
+        if len(parts) >= 4:
+
+            owner = parts[0]
+            repo = parts[1]
+
+            if parts[2] in (
+                "blob",
+                "raw"
+            ):
+
+                branch = parts[3]
+
+                path = "/".join(
+                    parts[4:]
+                )
+
+                return (
+                    owner,
+                    repo,
+                    branch,
+                    path
+                )
+
+    # owner/repo/path
+    parts = github_path.strip(
+        "/"
+    ).split(
+        "/"
+    )
+
+    if len(parts) >= 3:
+
+        owner = parts[0]
+        repo = parts[1]
+
+        path = "/".join(
+            parts[2:]
+        )
+
+        return (
+            owner,
+            repo,
+            DEFAULT_GITHUB_BRANCH,
+            path
+        )
+
+    # Default repository
+    if DEFAULT_GITHUB_REPOSITORY:
+
+        default_parts = (
+            DEFAULT_GITHUB_REPOSITORY
+            .split("/")
+        )
+
+        if len(default_parts) == 2:
+
+            return (
+                default_parts[0],
+                default_parts[1],
+                DEFAULT_GITHUB_BRANCH,
+                github_path.strip("/")
+            )
 
     return None
 
 
 # ============================================================
-# BASIC ACTIONS
+# GITHUB FILE DOWNLOAD
 # ============================================================
 
-def tell_time():
-    speak(
-        "The current time is "
-        + datetime.datetime.now().strftime("%I:%M %p")
+def download_from_github(
+    github_path
+):
+
+    parsed = parse_github_path(
+        github_path
     )
 
+    if not parsed:
 
-def tell_date():
-    speak(
-        "Today's date is "
-        + datetime.datetime.now().strftime("%d %B %Y")
+        speak(
+            "I could not understand the GitHub path."
+        )
+
+        return None
+
+    owner, repo, branch, path = parsed
+
+    try:
+
+        # Use GitHub raw URL for public files.
+        raw_url = (
+            "https://raw.githubusercontent.com/"
+            f"{owner}/{repo}/{branch}/{path}"
+        )
+
+        headers = {
+            "User-Agent":
+            "SAI-VoiceOS/1.0"
+        }
+
+        if GITHUB_TOKEN:
+
+            headers[
+                "Authorization"
+            ] = (
+                f"Bearer {GITHUB_TOKEN}"
+            )
+
+        request = urllib.request.Request(
+            raw_url,
+            headers=headers
+        )
+
+        with urllib.request.urlopen(
+            request,
+            timeout=30
+        ) as response:
+
+            data = response.read()
+
+        filename = Path(
+            path
+        ).name
+
+        destination = (
+            DOWNLOADS
+            / filename
+        )
+
+        destination.write_bytes(
+            data
+        )
+
+        speak(
+            f"GitHub file downloaded to {destination}."
+        )
+
+        return str(
+            destination
+        )
+
+    except Exception as exc:
+
+        print(
+            "GitHub download error:",
+            exc
+        )
+
+        speak(
+            "I could not fetch that GitHub file."
+        )
+
+        return None
+
+
+# ============================================================
+# GITHUB FILE READER
+# ============================================================
+
+def read_github_file(
+    github_path
+):
+
+    local_file = download_from_github(
+        github_path
     )
 
+    if not local_file:
 
-def calculate(expression):
+        return
+
+    extension = (
+        Path(
+            local_file
+        )
+        .suffix
+        .lower()
+    )
+
+    if extension == ".pdf":
+
+        read_pdf(
+            local_file
+        )
+
+    elif extension in (
+        ".txt",
+        ".md",
+        ".csv",
+        ".json",
+        ".py",
+        ".html",
+        ".xml"
+    ):
+
+        read_text_file(
+            local_file
+        )
+
+    else:
+
+        speak(
+            f"I downloaded {Path(local_file).name}. "
+            "This file type is not a text document."
+        )
+
+
+# ============================================================
+# PDF READER
+# ============================================================
+
+def read_pdf(
+    pdf_path,
+    page_number=None
+):
+
+    if PdfReader is None:
+
+        speak(
+            "PDF support is not installed."
+        )
+
+        return
+
+    pdf_path = Path(
+        pdf_path
+    ).expanduser().resolve()
+
+    if not pdf_path.exists():
+
+        speak(
+            "I could not find that PDF."
+        )
+
+        return
+
+    try:
+
+        reader = PdfReader(
+            str(pdf_path)
+        )
+
+        total = len(
+            reader.pages
+        )
+
+        if page_number is not None:
+
+            if (
+                page_number < 1
+                or page_number > total
+            ):
+
+                speak(
+                    f"The PDF has {total} pages."
+                )
+
+                return
+
+            text = (
+                reader
+                .pages[
+                    page_number - 1
+                ]
+                .extract_text()
+                or ""
+            )
+
+            if not text.strip():
+
+                speak(
+                    "That page has no extractable text."
+                )
+
+                return
+
+            speak(
+                text[:5000]
+            )
+
+            return
+
+        speak(
+            f"The PDF contains {total} pages."
+        )
+
+        for number, page in enumerate(
+            reader.pages,
+            start=1
+        ):
+
+            text = (
+                page.extract_text()
+                or ""
+            )
+
+            if not text.strip():
+
+                continue
+
+            speak(
+                f"Page {number}."
+            )
+
+            # Read in chunks
+            for start in range(
+                0,
+                len(text),
+                1200
+            ):
+
+                speak(
+                    text[
+                        start:
+                        start + 1200
+                    ]
+                )
+
+    except Exception as exc:
+
+        print(
+            "PDF error:",
+            exc
+        )
+
+        speak(
+            "I could not read the PDF."
+        )
+
+
+# ============================================================
+# SEARCH INSIDE PDF
+# ============================================================
+
+def search_pdf(
+    pdf_path,
+    search_term
+):
+
+    if PdfReader is None:
+
+        speak(
+            "PDF support is not installed."
+        )
+
+        return
+
+    pdf_path = Path(
+        pdf_path
+    ).expanduser().resolve()
+
+    if not pdf_path.exists():
+
+        speak(
+            "I could not find that PDF."
+        )
+
+        return
+
+    try:
+
+        reader = PdfReader(
+            str(pdf_path)
+        )
+
+        matches = []
+
+        for number, page in enumerate(
+            reader.pages,
+            start=1
+        ):
+
+            text = (
+                page.extract_text()
+                or ""
+            )
+
+            if (
+                search_term.lower()
+                in text.lower()
+            ):
+
+                matches.append(
+                    (
+                        number,
+                        text
+                    )
+                )
+
+        if not matches:
+
+            speak(
+                f"I could not find {search_term} in the PDF."
+            )
+
+            return
+
+        speak(
+            f"I found {search_term} "
+            f"on {len(matches)} page(s)."
+        )
+
+        for number, text in matches:
+
+            position = text.lower().find(
+                search_term.lower()
+            )
+
+            start = max(
+                0,
+                position - 350
+            )
+
+            end = min(
+                len(text),
+                position + 1200
+            )
+
+            speak(
+                f"Page {number}."
+            )
+
+            speak(
+                text[start:end]
+            )
+
+    except Exception as exc:
+
+        print(
+            "PDF search error:",
+            exc
+        )
+
+        speak(
+            "I could not search the PDF."
+        )
+
+
+# ============================================================
+# TEXT FILE READER
+# ============================================================
+
+def read_text_file(
+    file_path
+):
+
+    file_path = Path(
+        file_path
+    ).expanduser().resolve()
+
+    if not file_path.exists():
+
+        speak(
+            "I could not find that file."
+        )
+
+        return
+
+    try:
+
+        text = file_path.read_text(
+            encoding="utf-8",
+            errors="ignore"
+        )
+
+        if not text.strip():
+
+            speak(
+                "The file is empty."
+            )
+
+            return
+
+        for start in range(
+            0,
+            len(text),
+            1500
+        ):
+
+            speak(
+                text[
+                    start:
+                    start + 1500
+                ]
+            )
+
+    except Exception as exc:
+
+        print(
+            "Text reader error:",
+            exc
+        )
+
+        speak(
+            "I could not read that file."
+        )
+
+
+# ============================================================
+# CALCULATOR
+# ============================================================
+
+def calculate(
+    expression
+):
+
     expression = expression.lower()
 
     replacements = {
+
         "multiplied by": "*",
         "multiply by": "*",
         "times": "*",
+
         "plus": "+",
         "minus": "-",
+
         "divided by": "/",
         "divide by": "/",
-        "over": "/",
+
+        "over": "/"
+
     }
 
     for word, symbol in replacements.items():
-        expression = expression.replace(word, symbol)
 
-    expression = re.sub(r"(?<=\d)\s*x\s*(?=\d)", "*", expression)
-    expression = expression.replace("what is", "")
-    expression = expression.replace("calculate", "")
-    expression = expression.replace("?", "")
+        expression = expression.replace(
+            word,
+            symbol
+        )
 
+    expression = re.sub(
+        r"(?<=\d)\s*x\s*(?=\d)",
+        "*",
+        expression
+    )
+
+    expression = expression.replace(
+        "what is",
+        ""
+    )
+
+    expression = expression.replace(
+        "calculate",
+        ""
+    )
+
+    expression = expression.replace(
+        "?",
+        ""
+    )
+
+    # Security:
+    # Only mathematical characters allowed.
     cleaned = re.sub(
         r"[^0-9+\-*/().%\s]",
         "",
@@ -216,1124 +1498,1264 @@ def calculate(expression):
     )
 
     if not cleaned.strip():
-        speak("I could not understand the calculation.")
+
+        speak(
+            "I could not understand the calculation."
+        )
+
         return
 
     try:
-        result = eval(cleaned, {"__builtins__": {}}, {})
-        if isinstance(result, float) and result.is_integer():
-            result = int(result)
-        speak(f"The answer is {result}.")
-    except Exception:
-        speak("Sorry, I could not calculate that.")
 
+        result = eval(
+            cleaned,
+            {
+                "__builtins__":
+                {}
+            },
+            {}
+        )
+
+        if (
+            isinstance(
+                result,
+                float
+            )
+            and result.is_integer()
+        ):
+
+            result = int(
+                result
+            )
+
+        speak(
+            f"The answer is {result}."
+        )
+
+    except Exception:
+
+        speak(
+            "Sorry, I could not calculate that."
+        )
+
+
+# ============================================================
+# WINDOWS APPLICATIONS
+# ============================================================
 
 def open_calculator():
-    speak("Opening Calculator.")
+
+    speak(
+        "Opening Calculator."
+    )
+
     try:
-        subprocess.Popen(["calc.exe"])
+
+        subprocess.Popen(
+            ["calc.exe"]
+        )
+
     except Exception:
-        os.system("start calc")
+
+        os.system(
+            "start calc"
+        )
 
 
 def open_notepad():
-    speak("Opening Notepad.")
+
+    speak(
+        "Opening Notepad."
+    )
+
     try:
-        subprocess.Popen(["notepad.exe"])
+
+        subprocess.Popen(
+            ["notepad.exe"]
+        )
+
     except Exception:
-        speak("I could not open Notepad.")
+
+        speak(
+            "I could not open Notepad."
+        )
 
 
 def open_browser():
-    speak("Opening the browser.")
-    wb.open("https://www.google.com/")
+
+    speak(
+        "Opening the browser."
+    )
+
+    webbrowser.open(
+        "https://www.google.com/"
+    )
 
 
 def open_google():
-    speak("Opening Google.")
-    wb.open("https://www.google.com/")
+
+    speak(
+        "Opening Google."
+    )
+
+    webbrowser.open(
+        "https://www.google.com/"
+    )
 
 
 def open_youtube():
-    speak("Opening YouTube.")
-    wb.open("https://www.youtube.com/")
+
+    speak(
+        "Opening YouTube."
+    )
+
+    webbrowser.open(
+        "https://www.youtube.com/"
+    )
 
 
-def play_on_youtube(topic):
-    if not topic:
-        return open_youtube()
+def search_youtube(
+    topic
+):
 
     url = (
-        "https://www.youtube.com/results?search_query="
-        + urllib.parse.quote_plus(topic)
+        "https://www.youtube.com/results"
+        "?search_query="
+        + urllib.parse.quote_plus(
+            topic
+        )
     )
-    wb.open(url)
-    speak(f"Searching YouTube for {topic}.")
+
+    webbrowser.open(
+        url
+    )
+
+    speak(
+        f"Searching YouTube for {topic}."
+    )
 
 
 def open_whatsapp():
-    speak("Opening WhatsApp.")
-    try:
-        os.startfile("whatsapp:")
-        return
-    except Exception:
-        pass
-    wb.open("https://web.whatsapp.com/")
 
+    speak(
+        "Opening WhatsApp."
+    )
+
+    try:
+
+        os.startfile(
+            "whatsapp:"
+        )
+
+        return
+
+    except Exception:
+
+        pass
+
+    webbrowser.open(
+        "https://web.whatsapp.com/"
+    )
+
+
+# ============================================================
+# SCREENSHOT
+# ============================================================
 
 def take_screenshot():
+
     if pyautogui is None:
-        speak("Screenshot is available only on the local agent.")
+
+        speak(
+            "Screenshot support is not installed."
+        )
+
         return
 
     try:
+
         image = pyautogui.screenshot()
-        folder = Path.home() / "Pictures"
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / "sai_voiceos_screenshot.png"
-        image.save(path)
-        speak("Screenshot captured successfully.")
-        print("Saved:", path)
-    except Exception as exc:
-        print(exc)
-        speak("I could not take the screenshot.")
 
-
-def play_music(song_name=""):
-    folder = Path.home() / "Music"
-
-    if not folder.exists():
-        speak("I could not find your Music folder.")
-        return
-
-    extensions = (".mp3", ".wav", ".flac", ".m4a", ".aac")
-
-    songs = [
-        x for x in folder.iterdir()
-        if x.is_file() and x.suffix.lower() in extensions
-    ]
-
-    if song_name:
-        songs = [
-            x for x in songs
-            if song_name.lower() in x.name.lower()
-        ]
-
-    if not songs:
-        speak("I could not find that song.")
-        return
-
-    song = random.choice(songs)
-
-    try:
-        os.startfile(str(song))
-        speak(f"Playing {song.name}.")
-    except Exception:
-        speak("I could not play that song.")
-
-
-def write_note():
-    speak("What would you like me to write?")
-    note = take_command()
-
-    if not note:
-        return
-
-    path = Path.home() / "Desktop" / "sai_voiceos_notes.txt"
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    with open(path, "a", encoding="utf-8") as file:
-        file.write(f"[{stamp}] {note}\n")
-
-    speak("Your note has been saved to the desktop.")
-
-
-def tell_joke():
-    if pyjokes is None:
-        speak("Jokes are not installed.")
-        return
-    try:
-        speak(pyjokes.get_joke())
-    except Exception:
-        speak("I could not find a joke.")
-
-
-def get_weather(city="Guntur"):
-    try:
-        encoded = urllib.parse.quote(city)
-        url = f"https://wttr.in/{encoded}?format=j1"
-        request = urllib.request.Request(
-            url,
-            headers={"User-Agent": "SAI-VoiceOS/1.0"}
+        path = (
+            PICTURES
+            / "sai_voiceos_screenshot.png"
         )
 
-        with urllib.request.urlopen(request, timeout=10) as response:
-            data = json.loads(response.read().decode("utf-8"))
-
-        current = data["current_condition"][0]
-        temp = current["temp_C"]
-        desc = current["weatherDesc"][0]["value"]
+        image.save(
+            path
+        )
 
         speak(
-            f"The current temperature in {city} is "
-            f"{temp} degrees Celsius with {desc}."
-        )
-    except Exception as exc:
-        print("Weather error:", exc)
-        speak("I could not get the weather right now.")
-
-
-# ============================================================
-# INTERNET
-# ============================================================
-
-def internet_search(query):
-    url = (
-        "https://www.google.com/search?q="
-        + urllib.parse.quote_plus(query)
-    )
-    wb.open(url)
-    speak("I opened the search results.")
-
-
-def web_answer(query):
-    try:
-        url = (
-            "https://api.duckduckgo.com/?q="
-            + urllib.parse.quote_plus(query)
-            + "&format=json&no_html=1&skip_disambig=1"
+            f"Screenshot saved to {path}."
         )
 
-        request = urllib.request.Request(
-            url,
-            headers={"User-Agent": "SAI-VoiceOS/1.0"}
-        )
-
-        with urllib.request.urlopen(request, timeout=10) as response:
-            data = json.loads(response.read().decode("utf-8"))
-
-        answer = (data.get("AbstractText") or "").strip()
-
-        if answer:
-            speak(answer[:1500])
-            return answer
-
-        related = []
-        for item in data.get("RelatedTopics", [])[:5]:
-            if isinstance(item, dict) and item.get("Text"):
-                related.append(item["Text"])
-
-        if related:
-            speak(" ".join(related)[:1500])
-            return " ".join(related)
-
-    except Exception as exc:
-        print("Web error:", exc)
-
-    internet_search(query)
-    return None
-
-
-# ============================================================
-# GITHUB
-# ============================================================
-
-def github_headers(token):
-    return {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {token}",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-
-def github_ready():
-    token, repo, branch = get_github_config()
-
-    if not token:
-        speak("GitHub token is not configured.")
-        return None
-
-    if not repo or repo.startswith("YOUR_USERNAME"):
-        speak("GitHub repository is not configured.")
-        return None
-
-    return token, repo, branch
-
-
-def github_upload(local_file, github_path, message="SAI VoiceOS upload"):
-    config = github_ready()
-    if not config:
-        return False
-
-    token, repo, branch = config
-    local_file = Path(local_file).expanduser().resolve()
-
-    if not local_file.exists():
-        speak("I could not find the local file.")
-        return False
-
-    try:
-        content = base64.b64encode(
-            local_file.read_bytes()
-        ).decode("utf-8")
-
-        url = (
-            f"https://api.github.com/repos/{repo}/contents/"
-            f"{github_path.lstrip('/')}"
-        )
-
-        headers = github_headers(token)
-
-        check = requests.get(
-            url,
-            headers=headers,
-            params={"ref": branch},
-            timeout=15
-        )
-
-        payload = {
-            "message": message,
-            "content": content,
-            "branch": branch,
-        }
-
-        if check.status_code == 200:
-            payload["sha"] = check.json()["sha"]
-
-        response = requests.put(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-
-        if response.status_code in (200, 201):
-            speak(
-                f"The file was successfully pushed to GitHub "
-                f"at {github_path}."
-            )
-            return True
-
-        print(response.status_code, response.text)
-        speak("I could not push the file to GitHub.")
-        return False
-
-    except Exception as exc:
-        print("GitHub upload error:", exc)
-        speak("GitHub upload failed.")
-        return False
-
-
-def github_download(github_path, local_path=None):
-    config = github_ready()
-    if not config:
-        return False
-
-    token, repo, branch = config
-
-    try:
-        url = (
-            f"https://api.github.com/repos/{repo}/contents/"
-            f"{github_path.lstrip('/')}"
-        )
-
-        response = requests.get(
-            url,
-            headers=github_headers(token),
-            params={"ref": branch},
-            timeout=15
-        )
-
-        if response.status_code != 200:
-            speak("I could not find that GitHub file.")
-            return False
-
-        data = response.json()
-        content = base64.b64decode(data["content"])
-
-        if not local_path:
-            local_path = (
-                Path.home()
-                / "Downloads"
-                / Path(github_path).name
-            )
-
-        local_path = Path(local_path).expanduser().resolve()
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        local_path.write_bytes(content)
-
-        speak(f"The file was downloaded to {local_path}.")
-        return True
-
-    except Exception as exc:
-        print("GitHub download error:", exc)
-        speak("I could not download the GitHub file.")
-        return False
-
-
-def github_list(path=""):
-    config = github_ready()
-    if not config:
-        return []
-
-    token, repo, branch = config
-
-    try:
-        url = (
-            f"https://api.github.com/repos/{repo}/contents/"
-            f"{path.lstrip('/')}"
-        )
-
-        response = requests.get(
-            url,
-            headers=github_headers(token),
-            params={"ref": branch},
-            timeout=15
-        )
-
-        if response.status_code != 200:
-            speak("I could not list that GitHub path.")
-            return []
-
-        data = response.json()
-        if not isinstance(data, list):
-            data = [data]
-
-        return data
-
-    except Exception as exc:
-        print("GitHub list error:", exc)
-        speak("I could not list GitHub files.")
-        return []
-
-
-def read_github_pdf(github_path):
-    local_path = (
-        Path.home()
-        / "Downloads"
-        / Path(github_path).name
-    )
-
-    if github_download(github_path, local_path):
-        read_pdf(local_path)
-
-
-def search_github_pdf(github_path, term):
-    local_path = (
-        Path.home()
-        / "Downloads"
-        / Path(github_path).name
-    )
-
-    if github_download(github_path, local_path):
-        search_in_pdf(local_path, term)
-
-
-# ============================================================
-# PDF / FILES
-# ============================================================
-
-def pdf_pages(source):
-    if isinstance(source, (str, Path)):
-        reader = PdfReader(str(source))
-    else:
-        reader = PdfReader(io.BytesIO(source))
-
-    return [
-        (number, page.extract_text() or "")
-        for number, page in enumerate(reader.pages, start=1)
-    ]
-
-
-def read_pdf(path, page_number=None):
-    path = Path(path).expanduser().resolve()
-
-    if not path.exists():
-        speak("I could not find that PDF.")
-        return
-
-    try:
-        pages = pdf_pages(path)
-
-        if page_number is not None:
-            if page_number < 1 or page_number > len(pages):
-                speak(f"The PDF has {len(pages)} pages.")
-                return
-
-            text = pages[page_number - 1][1]
-            speak(text[:5000] or "No extractable text on that page.")
-            return
-
-        speak(f"This PDF contains {len(pages)} pages.")
-
-        for number, text in pages:
-            if not text.strip():
-                continue
-
-            print(f"\n===== PAGE {number} =====\n{text}")
-
-            for start in range(0, len(text), 1200):
-                speak(text[start:start + 1200])
-
-    except Exception as exc:
-        print("PDF error:", exc)
-        speak("I could not read that PDF.")
-
-
-def search_in_pdf(path, term):
-    path = Path(path).expanduser().resolve()
-
-    if not path.exists():
-        speak("I could not find that PDF.")
-        return
-
-    try:
-        pages = pdf_pages(path)
-        matches = [
-            (number, text)
-            for number, text in pages
-            if term.lower() in text.lower()
-        ]
-
-        if not matches:
-            speak(f"I could not find {term} in the PDF.")
-            return
+    except Exception:
 
         speak(
-            f"I found {term} on {len(matches)} page(s)."
+            "I could not take the screenshot."
         )
 
-        for number, text in matches:
-            position = text.lower().find(term.lower())
-            start = max(0, position - 350)
-            end = min(len(text), position + 1100)
 
-            speak(f"Page {number}.")
-            speak(text[start:end])
+# ============================================================
+# NOTES
+# ============================================================
 
-    except Exception as exc:
-        print("PDF search error:", exc)
-        speak("I could not search the PDF.")
+def write_note(
+    text
+):
 
+    path = (
+        DESKTOP
+        / "sai_voiceos_notes.txt"
+    )
 
-def read_text_file(path):
-    path = Path(path).expanduser().resolve()
-
-    if not path.exists():
-        speak("I could not find that file.")
-        return
+    timestamp = datetime.datetime.now().strftime(
+        "%Y-%m-%d %H:%M"
+    )
 
     try:
-        text = path.read_text(
-            encoding="utf-8",
-            errors="ignore"
+
+        with open(
+            path,
+            "a",
+            encoding="utf-8"
+        ) as file:
+
+            file.write(
+                f"[{timestamp}] {text}\n"
+            )
+
+        speak(
+            "The note has been saved."
         )
-        speak(text[:6000] or "The file is empty.")
-    except Exception as exc:
-        print(exc)
-        speak("I could not read that file.")
+
+    except Exception:
+
+        speak(
+            "I could not save the note."
+        )
 
 
-def find_local_file(name, folder=None):
-    folder = Path(folder or Path.home()).expanduser()
+# ============================================================
+# LOCAL FILE SEARCH
+# ============================================================
+
+def find_local_file(
+    filename
+):
+
+    speak(
+        f"Searching your computer for {filename}."
+    )
 
     matches = []
 
     try:
-        for root, dirs, files in os.walk(folder):
+
+        for root, dirs, files in os.walk(
+            HOME
+        ):
+
             dirs[:] = [
-                d for d in dirs
-                if d.lower() not in {
+                d
+                for d in dirs
+                if d.lower()
+                not in {
                     "appdata",
                     "node_modules",
                     ".git"
                 }
             ]
 
-            for filename in files:
-                if name.lower() in filename.lower():
-                    matches.append(Path(root) / filename)
+            for file in files:
+
+                if (
+                    filename.lower()
+                    in file.lower()
+                ):
+
+                    matches.append(
+                        Path(root)
+                        / file
+                    )
 
                     if len(matches) >= 10:
+
                         break
 
             if len(matches) >= 10:
+
                 break
 
     except Exception as exc:
-        print(exc)
+
+        print(
+            "File search error:",
+            exc
+        )
 
     if not matches:
-        speak(f"I could not find {name}.")
-        return []
 
-    speak(f"I found {len(matches)} matching files.")
+        speak(
+            f"I could not find {filename}."
+        )
+
+        return
+
+    speak(
+        f"I found {len(matches)} file(s)."
+    )
 
     for path in matches:
-        print(path)
 
-    return matches
+        speak(
+            str(path)
+        )
 
 
 # ============================================================
-# COMMAND ENGINE
+# WEATHER
 # ============================================================
 
-def handle_command(query):
+def weather(
+    city="Guntur"
+):
+
+    try:
+
+        encoded = urllib.parse.quote(
+            city
+        )
+
+        url = (
+            f"https://wttr.in/"
+            f"{encoded}?format=j1"
+        )
+
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent":
+                "SAI-VoiceOS/1.0"
+            }
+        )
+
+        with urllib.request.urlopen(
+            request,
+            timeout=10
+        ) as response:
+
+            data = json.loads(
+                response.read().decode(
+                    "utf-8"
+                )
+            )
+
+        current = (
+            data[
+                "current_condition"
+            ][0]
+        )
+
+        temperature = current[
+            "temp_C"
+        ]
+
+        description = current[
+            "weatherDesc"
+        ][0]["value"]
+
+        speak(
+            f"The current temperature in "
+            f"{city} is {temperature} degrees Celsius "
+            f"with {description}."
+        )
+
+    except Exception:
+
+        speak(
+            "I could not get the weather."
+        )
+
+
+# ============================================================
+# JOKE
+# ============================================================
+
+def tell_joke():
+
+    if pyjokes is None:
+
+        speak(
+            "Joke support is not installed."
+        )
+
+        return
+
+    try:
+
+        speak(
+            pyjokes.get_joke()
+        )
+
+    except Exception:
+
+        speak(
+            "I could not get a joke."
+        )
+
+
+# ============================================================
+# GITHUB -> PDF -> READ
+# ============================================================
+
+def github_pdf(
+    github_path
+):
+
+    local_file = download_from_github(
+        github_path
+    )
+
+    if local_file:
+
+        read_pdf(
+            local_file
+        )
+
+
+# ============================================================
+# GITHUB -> PDF -> SEARCH
+# ============================================================
+
+def github_pdf_search(
+    github_path,
+    search_term
+):
+
+    local_file = download_from_github(
+        github_path
+    )
+
+    if local_file:
+
+        search_pdf(
+            local_file,
+            search_term
+        )
+
+
+# ============================================================
+# COMMAND HELP
+# ============================================================
+
+def show_help():
+
+    speak(
+        "You can ask me to open applications, "
+        "calculate numbers, search the internet, "
+        "download files, read PDFs, search PDFs, "
+        "read GitHub files, search GitHub PDFs, "
+        "take screenshots, write notes, "
+        "find local files, or tell you the weather."
+    )
+
+
+# ============================================================
+# FUNCTION REGISTRY
+# ============================================================
+#
+# THIS IS THE IMPORTANT PART.
+#
+# Every capability has a function.
+#
+# Future functions can be added here.
+#
+# ============================================================
+
+SAI_FUNCTIONS = {
+
+    "calculator":
+        calculate,
+
+    "internet_search":
+        internet_search,
+
+    "internet_answer":
+        internet_answer,
+
+    "internet_download":
+        download_from_internet,
+
+    "github_download":
+        download_from_github,
+
+    "github_read":
+        read_github_file,
+
+    "github_pdf":
+        github_pdf,
+
+    "github_pdf_search":
+        github_pdf_search,
+
+    "pdf_read":
+        read_pdf,
+
+    "pdf_search":
+        search_pdf,
+
+    "text_read":
+        read_text_file,
+
+    "local_file_search":
+        find_local_file,
+
+    "open_calculator":
+        open_calculator,
+
+    "open_notepad":
+        open_notepad,
+
+    "open_browser":
+        open_browser,
+
+    "open_google":
+        open_google,
+
+    "open_youtube":
+        open_youtube,
+
+    "youtube_search":
+        search_youtube,
+
+    "open_whatsapp":
+        open_whatsapp,
+
+    "screenshot":
+        take_screenshot,
+
+    "write_note":
+        write_note,
+
+    "weather":
+        weather,
+
+    "joke":
+        tell_joke,
+
+    "help":
+        show_help
+
+}
+
+
+# ============================================================
+# COMMAND PROCESSOR
+# ============================================================
+
+def process_command(
+    query
+):
+
+    global SAI_RUNNING
+
     if not query:
-        return True
 
-    query = query.lower().strip()
+        return
 
-    if any(x in query for x in [
-        "exit",
-        "quit",
-        "go offline",
-        "stop listening"
-    ]):
-        speak("SAI VoiceOS is going offline. Goodbye.")
-        return False
+    query = query.strip()
+
+    # --------------------------------------------------------
+    # OFF
+    # --------------------------------------------------------
+
+    if query in (
+        "off",
+        "turn off",
+        "switch off",
+        "shutdown sai",
+        "exit sai",
+        "quit sai",
+        "stop sai"
+    ):
+
+        speak(
+            "SAI VoiceOS is turning off."
+        )
+
+        SAI_RUNNING = False
+
+        return
+
+
+    # --------------------------------------------------------
+    # HELP
+    # --------------------------------------------------------
+
+    if (
+        query == "help"
+        or "what can you do" in query
+    ):
+
+        show_help()
+
+        return
+
+
+    # --------------------------------------------------------
+    # TIME
+    # --------------------------------------------------------
 
     if (
         query == "time"
         or "what time is it" in query
-        or "current time" in query
     ):
-        tell_time()
-        return True
+
+        current = datetime.datetime.now().strftime(
+            "%I:%M %p"
+        )
+
+        speak(
+            f"The current time is {current}."
+        )
+
+        return
+
+
+    # --------------------------------------------------------
+    # DATE
+    # --------------------------------------------------------
 
     if (
         query == "date"
         or "what is the date" in query
-        or "today's date" in query
     ):
-        tell_date()
-        return True
+
+        today = datetime.datetime.now().strftime(
+            "%d %B %Y"
+        )
+
+        speak(
+            f"Today's date is {today}."
+        )
+
+        return
+
+
+    # --------------------------------------------------------
+    # CALCULATOR
+    # --------------------------------------------------------
 
     if (
-        re.search(r"\d+\s*(?:\+|-|\*|/|x|×)\s*\d+", query)
-        or query.startswith("calculate ")
+        re.search(
+            r"\d+\s*(?:\+|-|\*|/|x|×)\s*\d+",
+            query
+        )
+        or query.startswith(
+            "calculate "
+        )
+        or (
+            "what is " in query
+            and any(
+                word in query
+                for word in [
+                    "plus",
+                    "minus",
+                    "times",
+                    "divided"
+                ]
+            )
+        )
     ):
-        calculate(query)
-        return True
+
+        calculate(
+            query
+        )
+
+        return
+
+
+    # --------------------------------------------------------
+    # WEATHER
+    # --------------------------------------------------------
 
     if "weather" in query:
+
         match = re.search(
             r"weather\s+(?:in|at|for)\s+(.+)",
             query
         )
-        get_weather(
-            match.group(1).strip()
-            if match else "Guntur"
-        )
-        return True
 
-    if "open calculator" in query or "open calc" in query:
+        if match:
+
+            weather(
+                match.group(1).strip()
+            )
+
+        else:
+
+            weather()
+
+        return
+
+
+    # --------------------------------------------------------
+    # OPEN CALCULATOR
+    # --------------------------------------------------------
+
+    if (
+        "open calculator" in query
+        or "open calc" in query
+    ):
+
         open_calculator()
-        return True
+
+        return
+
+
+    # --------------------------------------------------------
+    # OPEN NOTEPAD
+    # --------------------------------------------------------
 
     if "open notepad" in query:
+
         open_notepad()
-        return True
+
+        return
+
+
+    # --------------------------------------------------------
+    # OPEN WHATSAPP
+    # --------------------------------------------------------
 
     if "open whatsapp" in query:
+
         open_whatsapp()
-        return True
+
+        return
+
+
+    # --------------------------------------------------------
+    # OPEN YOUTUBE
+    # --------------------------------------------------------
 
     if "open youtube" in query:
+
         open_youtube()
-        return True
 
-    if "search youtube for" in query or "play on youtube" in query:
-        topic = (
-            query
-            .replace("search youtube for", "")
-            .replace("play on youtube", "")
-            .strip()
-        )
-        play_on_youtube(topic)
-        return True
+        return
 
-    if "open browser" in query or "open chrome" in query:
-        open_browser()
-        return True
 
-    if "open google" in query:
-        open_google()
-        return True
+    # --------------------------------------------------------
+    # SEARCH YOUTUBE
+    # --------------------------------------------------------
 
-    if "search on google" in query or "google search" in query:
-        topic = (
-            query
-            .replace("search on google", "")
-            .replace("google search", "")
-            .strip()
-        )
-        internet_search(topic)
-        return True
+    if (
+        "search youtube for" in query
+        or "youtube search" in query
+        or "play on youtube" in query
+    ):
 
-    if "screenshot" in query:
-        take_screenshot()
-        return True
+        topic = query
 
-    if "play music" in query:
-        play_music(
-            query.replace("play music", "").strip()
-        )
-        return True
+        for phrase in [
+            "search youtube for",
+            "youtube search",
+            "play on youtube"
+        ]:
 
-    if "write a note" in query or "take a note" in query:
-        write_note()
-        return True
-
-    if "tell me a joke" in query:
-        tell_joke()
-        return True
-
-    if "list github files" in query or "show github files" in query:
-        items = github_list()
-        if items:
-            speak(
-                "I found: "
-                + ", ".join(
-                    item.get("name", "")
-                    for item in items[:20]
-                )
+            topic = topic.replace(
+                phrase,
+                ""
             )
-        return True
 
-    if "read pdf from github" in query or "read github pdf" in query:
-        speak("Tell me the GitHub PDF path.")
-        path = take_command()
+        search_youtube(
+            topic.strip()
+        )
+
+        return
+
+
+    # --------------------------------------------------------
+    # OPEN BROWSER
+    # --------------------------------------------------------
+
+    if (
+        "open browser" in query
+        or "open chrome" in query
+    ):
+
+        open_browser()
+
+        return
+
+
+    # --------------------------------------------------------
+    # GOOGLE SEARCH
+    # --------------------------------------------------------
+
+    if (
+        "search google for" in query
+        or "search on google" in query
+    ):
+
+        topic = query
+
+        topic = topic.replace(
+            "search google for",
+            ""
+        )
+
+        topic = topic.replace(
+            "search on google",
+            ""
+        )
+
+        internet_search(
+            topic.strip()
+        )
+
+        return
+
+
+    # --------------------------------------------------------
+    # INTERNET DOWNLOAD
+    # --------------------------------------------------------
+    #
+    # Example:
+    #
+    # download https://example.com/file.pdf
+    #
+    # --------------------------------------------------------
+
+    if (
+        query.startswith(
+            "download "
+        )
+        or "download this file" in query
+    ):
+
+        url = query
+
+        url = url.replace(
+            "download this file",
+            ""
+        )
+
+        url = url.replace(
+            "download",
+            ""
+        )
+
+        url = url.strip()
+
+        if (
+            url.startswith(
+                "http://"
+            )
+            or url.startswith(
+                "https://"
+            )
+        ):
+
+            download_from_internet(
+                url
+            )
+
+        else:
+
+            speak(
+                "Please give me the internet file URL."
+            )
+
+        return
+
+
+    # --------------------------------------------------------
+    # GITHUB READ
+    # --------------------------------------------------------
+    #
+    # Examples:
+    #
+    # read github owner/repo/file.pdf
+    #
+    # read this github file
+    #
+    # --------------------------------------------------------
+
+    if (
+        "read github" in query
+        or "read this github file" in query
+        or "read github file" in query
+    ):
+
+        path = query
+
+        for phrase in [
+            "read this github file",
+            "read github file",
+            "read github"
+        ]:
+
+            path = path.replace(
+                phrase,
+                ""
+            )
+
+        path = path.strip()
+
         if path:
-            read_github_pdf(path)
-        return True
 
-    if "search github pdf" in query or "find in github pdf" in query:
-        speak("Tell me the GitHub PDF path.")
-        path = take_command()
+            read_github_file(
+                path
+            )
+
+        else:
+
+            speak(
+                "Please give me the GitHub repository path."
+            )
+
+        return
+
+
+    # --------------------------------------------------------
+    # GITHUB PDF SEARCH
+    # --------------------------------------------------------
+
+    if (
+        "search github pdf" in query
+        or "find in github pdf" in query
+    ):
+
+        speak(
+            "Tell me the GitHub PDF path."
+        )
+
+        path = listen_once()
+
         if not path:
-            return True
 
-        speak("What should I search for?")
-        term = take_command()
+            return
+
+        speak(
+            "What should I search for?"
+        )
+
+        term = listen_once()
 
         if term:
-            search_github_pdf(path, term)
 
-        return True
+            github_pdf_search(
+                path,
+                term
+            )
 
-    if "download from github" in query or "download github file" in query:
-        speak("Tell me the GitHub file path.")
-        path = take_command()
+        return
 
-        if path:
-            github_download(path)
 
-        return True
+    # --------------------------------------------------------
+    # LOCAL PDF
+    # --------------------------------------------------------
 
-    if "push to github" in query or "upload to github" in query:
-        speak("Tell me the complete local file path.")
-        local = take_command()
+    if (
+        "read pdf" in query
+        or "read this pdf" in query
+    ):
 
-        if not local:
-            return True
+        path = query
 
-        speak("Tell me the GitHub folder path.")
-        folder = take_command()
-
-        if not folder:
-            return True
-
-        github_path = (
-            folder.rstrip("/")
-            + "/"
-            + Path(local).name
+        path = path.replace(
+            "read this pdf",
+            ""
         )
 
-        github_upload(
-            local,
-            github_path,
-            f"SAI VoiceOS: upload {Path(local).name}"
+        path = path.replace(
+            "read pdf",
+            ""
         )
-        return True
 
-    if "read this pdf" in query or "read pdf" in query:
-        speak("Tell me the complete PDF path.")
-        path = take_command()
+        path = path.strip()
 
         if path:
-            read_pdf(path)
 
-        return True
+            read_pdf(
+                path
+            )
 
-    if "search in pdf" in query or "find in pdf" in query:
-        speak("Tell me the PDF path.")
-        path = take_command()
+        else:
+
+            speak(
+                "Please give me the PDF file path."
+            )
+
+        return
+
+
+    # --------------------------------------------------------
+    # PDF SEARCH
+    # --------------------------------------------------------
+
+    if (
+        "search in pdf" in query
+        or "find in pdf" in query
+    ):
+
+        speak(
+            "Tell me the PDF path."
+        )
+
+        path = listen_once()
 
         if not path:
-            return True
 
-        speak("What should I search for?")
-        term = take_command()
+            return
+
+        speak(
+            "What should I search for?"
+        )
+
+        term = listen_once()
 
         if term:
-            search_in_pdf(path, term)
 
-        return True
+            search_pdf(
+                path,
+                term
+            )
 
-    if "find file" in query or "search for file" in query:
-        name = (
-            query
-            .replace("find file", "")
-            .replace("search for file", "")
-            .strip()
+        return
+
+
+    # --------------------------------------------------------
+    # FIND LOCAL FILE
+    # --------------------------------------------------------
+
+    if (
+        "find file" in query
+        or "search for file" in query
+    ):
+
+        name = query
+
+        name = name.replace(
+            "find file",
+            ""
         )
+
+        name = name.replace(
+            "search for file",
+            ""
+        )
+
+        name = name.strip()
 
         if name:
-            find_local_file(name)
 
-        return True
+            find_local_file(
+                name
+            )
 
-    if query.startswith("open "):
-        app = query.replace("open ", "", 1).strip()
+        return
+
+
+    # --------------------------------------------------------
+    # SCREENSHOT
+    # --------------------------------------------------------
+
+    if "screenshot" in query:
+
+        take_screenshot()
+
+        return
+
+
+    # --------------------------------------------------------
+    # NOTE
+    # --------------------------------------------------------
+
+    if (
+        query.startswith(
+            "note "
+        )
+        or query.startswith(
+            "write note "
+        )
+    ):
+
+        note = query
+
+        note = note.replace(
+            "write note ",
+            ""
+        )
+
+        note = note.replace(
+            "note ",
+            ""
+        )
+
+        write_note(
+            note.strip()
+        )
+
+        return
+
+
+    # --------------------------------------------------------
+    # JOKE
+    # --------------------------------------------------------
+
+    if (
+        "tell me a joke" in query
+        or query == "joke"
+    ):
+
+        tell_joke()
+
+        return
+
+
+    # --------------------------------------------------------
+    # GENERIC OPEN
+    # --------------------------------------------------------
+
+    if query.startswith(
+        "open "
+    ):
+
+        app = query[
+            len("open "):
+        ].strip()
 
         if "calculator" in app:
+
             open_calculator()
+
         elif "notepad" in app:
+
             open_notepad()
+
         elif "whatsapp" in app:
+
             open_whatsapp()
+
         elif "youtube" in app:
+
             open_youtube()
-        elif "browser" in app or "chrome" in app:
+
+        elif (
+            "browser" in app
+            or "chrome" in app
+        ):
+
             open_browser()
+
+        elif "google" in app:
+
+            open_google()
+
         else:
+
             speak(
-                f"I do not have a local action for {app}. "
-                "I will search the internet."
+                f"I don't have a local function "
+                f"for {app} yet."
             )
-            internet_search(f"how to open {app}")
 
-        return True
+            internet_search(
+                f"how to open {app}"
+            )
 
-    # Important: unknown questions go to the Internet.
-    web_answer(query)
-    return True
+        return
 
 
-# ============================================================
-# STREAMLIT CLOUD UI
-# ============================================================
+    # --------------------------------------------------------
+    # GENERAL INTERNET QUESTION
+    # --------------------------------------------------------
 
-def cloud_app():
-    st.set_page_config(
-        page_title="SAI VoiceOS",
-        page_icon="🎙️",
-        layout="wide"
-    )
-
-    st.title("🎙️ SAI VoiceOS")
-    st.caption(
-        "Voice-first accessibility environment: "
-        "Internet + GitHub + PDF + Local Agent"
-    )
-
-    tab_web, tab_github, tab_pdf, tab_files = st.tabs(
-        ["🌐 Internet", "🐙 GitHub", "📄 PDF", "📂 Files"]
-    )
-
-    with tab_web:
-        st.header("Internet")
-
-        query = st.text_input(
-            "Ask SAI anything",
-            placeholder="What is artificial intelligence?"
-        )
-
-        c1, c2 = st.columns(2)
-
-        with c1:
-            if st.button(
-                "Get Web Answer",
-                use_container_width=True
-            ) and query.strip():
-                web_answer(query)
-
-        with c2:
-            if st.button(
-                "Open Search",
-                use_container_width=True
-            ) and query.strip():
-                encoded = urllib.parse.quote_plus(query)
-                st.link_button(
-                    "Open Google",
-                    f"https://www.google.com/search?q={encoded}"
-                )
-
-    with tab_github:
-        st.header("GitHub File Manager")
-
-        token, repo, branch = get_github_config()
-
-        st.write(
-            f"Repository: `{repo or 'Not configured'}` | "
-            f"Branch: `{branch}`"
-        )
-
-        uploaded = st.file_uploader(
-            "Choose a file to push to GitHub",
-            type=None
-        )
-
-        github_path = st.text_input(
-            "GitHub path",
-            placeholder="documents/resume.pdf"
-        )
-
-        if st.button(
-            "Push File to GitHub",
-            use_container_width=True
-        ):
-            if not uploaded or not github_path.strip():
-                st.warning("Choose a file and enter its GitHub path.")
-            else:
-                temp_dir = Path("/tmp/sai_voiceos")
-                temp_dir.mkdir(exist_ok=True)
-                temp = temp_dir / uploaded.name
-                temp.write_bytes(uploaded.getvalue())
-
-                github_upload(
-                    temp,
-                    github_path.strip(),
-                    f"SAI VoiceOS: upload {uploaded.name}"
-                )
-
-        st.divider()
-
-        list_path = st.text_input(
-            "GitHub folder to list",
-            placeholder="documents"
-        )
-
-        if st.button(
-            "List GitHub Files",
-            use_container_width=True
-        ):
-            items = github_list(list_path.strip())
-
-            if items:
-                for item in items:
-                    icon = "📁" if item.get("type") == "dir" else "📄"
-                    st.write(
-                        f"{icon} `{item.get('path', item.get('name', ''))}`"
-                    )
-            else:
-                st.info("No files found.")
-
-        st.divider()
-
-        download_path = st.text_input(
-            "GitHub file to download",
-            placeholder="documents/resume.pdf"
-        )
-
-        if st.button(
-            "Prepare GitHub Download",
-            use_container_width=True
-        ):
-            if download_path.strip():
-                data = github_download(download_path.strip())
-
-                if data is not False and data is not None:
-                    st.download_button(
-                        "⬇️ Download File",
-                        data=data,
-                        file_name=Path(download_path).name,
-                        mime="application/octet-stream"
-                    )
-
-    with tab_pdf:
-        st.header("PDF Reader")
-
-        pdf = st.file_uploader(
-            "Upload PDF",
-            type=["pdf"]
-        )
-
-        if pdf:
-            data = pdf.getvalue()
-
-            try:
-                pages = pdf_pages(data)
-
-                st.success(
-                    f"PDF loaded: {len(pages)} page(s)."
-                )
-
-                page = st.number_input(
-                    "Page number (0 = entire PDF)",
-                    min_value=0,
-                    max_value=len(pages),
-                    value=0,
-                    step=1
-                )
-
-                if st.button(
-                    "Read PDF",
-                    use_container_width=True
-                ):
-                    if page == 0:
-                        text = "\n\n".join(
-                            f"===== PAGE {n} =====\n{text}"
-                            for n, text in pages
-                        )
-                    else:
-                        text = pages[page - 1][1]
-
-                    st.text_area(
-                        "Extracted text",
-                        text,
-                        height=500
-                    )
-
-                term = st.text_input(
-                    "Search inside PDF",
-                    placeholder="artificial intelligence"
-                )
-
-                if st.button(
-                    "Find in PDF",
-                    use_container_width=True
-                ) and term.strip():
-                    matches = [
-                        (n, text)
-                        for n, text in pages
-                        if term.lower() in text.lower()
-                    ]
-
-                    if not matches:
-                        st.info("No match found.")
-                    else:
-                        st.success(
-                            f"Found on {len(matches)} page(s)."
-                        )
-                        for n, text in matches:
-                            position = text.lower().find(term.lower())
-                            start = max(0, position - 400)
-                            end = min(len(text), position + 1200)
-                            st.markdown(f"### Page {n}")
-                            st.write(text[start:end])
-
-            except Exception as exc:
-                st.error(f"PDF error: {exc}")
-
-    with tab_files:
-        st.header("File Reader")
-
-        uploaded = st.file_uploader(
-            "Upload a text file",
-            type=["txt", "md", "csv", "json", "py"]
-        )
-
-        if uploaded:
-            raw = uploaded.getvalue()
-
-            try:
-                text = raw.decode("utf-8", errors="ignore")
-
-                st.text_area(
-                    "File content",
-                    text,
-                    height=500
-                )
-
-            except Exception as exc:
-                st.error(str(exc))
-
-    st.divider()
-
-    st.subheader("Architecture")
-
-    st.code(
-        """VOICE
-  |
-  v
-Speech-to-Text
-  |
-  v
-SAI Intent Engine
-  |
-  +--> Local Windows Agent
-  |      Calculator
-  |      Notepad
-  |      Browser
-  |      WhatsApp
-  |      Screenshot
-  |      Local Files
-  |      TTS
-  |
-  +--> Internet
-  |      Search
-  |      Web Answers
-  |
-  +--> GitHub
-  |      Upload / Push
-  |      Download
-  |      List
-  |      Read PDF
-  |
-  +--> Documents
-         PDF Reader
-         PDF Search
-
-  |
-  v
-Voice / Text Response
-""",
-        language="text"
-    )
-
-    st.info(
-        "Streamlit Cloud is remote. It cannot directly open your "
-        "personal Windows Calculator, WhatsApp Desktop, microphone "
-        "or screen. Run this same file locally for those capabilities."
+    internet_answer(
+        query
     )
 
 
 # ============================================================
-# LOCAL APP
+# STARTUP
 # ============================================================
 
-def local_app():
+def startup():
+
     speak(
-        "Welcome to SAI VoiceOS. "
-        "I am ready for your command."
+        "Welcome to SAI VoiceOS."
     )
 
-    while True:
-        query = take_command()
+    speak(
+        "I am always listening."
+    )
 
-        if query and not handle_command(query):
-            break
+    speak(
+        "You can ask me anything or ask me "
+        "to control your computer."
+    )
+
+    speak(
+        "Say off whenever you want me to stop."
+    )
 
 
 # ============================================================
-# ENTRY POINT
+# MAIN
+# ============================================================
+
+def main():
+
+    global SAI_RUNNING
+
+    startup()
+
+    # Voice listening thread
+    threading.Thread(
+        target=voice_loop,
+        daemon=True
+    ).start()
+
+    # UI thread stays in main thread
+    if UI.root:
+
+        UI.run()
+
+    else:
+
+        # Fallback terminal mode
+        while SAI_RUNNING:
+
+            try:
+
+                query = input(
+                    "\nYOU: "
+                ).strip()
+
+                if query:
+
+                    process_command(
+                        query
+                    )
+
+            except KeyboardInterrupt:
+
+                SAI_RUNNING = False
+
+                break
+
+    speak(
+        "SAI VoiceOS has stopped."
+    )
+
+
+# ============================================================
+# RUN
 # ============================================================
 
 if __name__ == "__main__":
-    # When started with `streamlit run`, Streamlit exists and
-    # the script is executed by Streamlit.
-    # When started with `python`, use the local voice agent.
-    if st is None:
-        local_app()
-    else:
-        # Streamlit sets this environment variable.
-        if os.environ.get("STREAMLIT_SERVER_PORT"):
-            cloud_app()
-        else:
-            # Normal python execution: local agent.
-            local_app()
+
+    main()
