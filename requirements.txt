@@ -1,9 +1,4 @@
-streamlit
-streamlit-webrtc
 SpeechRecognition
-numpy
-requests
-wikipedia
-PyPDF2
-python-docx
-av
+pyttsx3
+PyAudio
+pyautogui
