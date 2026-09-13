@@ -1,41 +1,48 @@
 """
-SAI VOICE OS
-============
+=========================================================
+                 SAI VOICE OS
+=========================================================
 
-Two modes:
+VOICE ONLY ACCESSIBILITY OS
 
-1. STREAMLIT CLOUD
-   - Voice input from browser
-   - Internet search
-   - Wikipedia
-   - Weather
-   - GitHub
-   - Uploaded documents
-   - PDF/TXT/DOCX reading
-   - Calculator
-   - Browser links
-   - Web answers
+STREAMLIT CLOUD
+----------------
+Voice input
+Browser TTS
+Internet
+Google Search
+YouTube
+Wikipedia
+Weather
+Calculator
+PDF / TXT / DOCX
+GitHub
 
-2. WINDOWS LOCAL
-   - Microphone
-   - TTS
-   - Local files
-   - Notepad
-   - Calculator
-   - Chrome
-   - Screenshot
-   - Notes
-   - Music
-   - WhatsApp Web
-   - Windows commands
+WINDOWS LOCAL
+----------------
+Microphone
+TTS
+Notepad
+Calculator
+Chrome
+YouTube
+Google
+WhatsApp
+Screenshot
+Local Files
+Music
+Notes
+Shutdown / Restart
 
-The same Python file automatically detects Streamlit mode.
+NO TEXT COMMAND INPUT
+=========================================================
 """
 
 import os
 import io
 import re
 import json
+import base64
 import random
 import datetime
 import webbrowser
@@ -45,9 +52,14 @@ import subprocess
 import tempfile
 import platform
 
-# -----------------------------
-# Optional imports
-# -----------------------------
+# =========================================================
+# OPTIONAL LIBRARIES
+# =========================================================
+
+try:
+    import streamlit as st
+except ImportError:
+    st = None
 
 try:
     import speech_recognition as sr
@@ -84,95 +96,160 @@ try:
 except ImportError:
     Document = None
 
-try:
-    import streamlit as st
-except ImportError:
-    st = None
+
+# =========================================================
+# MODE DETECTION
+# =========================================================
+
+STREAMLIT_MODE = st is not None
+
+WINDOWS_MODE = (
+    platform.system().lower() == "windows"
+)
 
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
+# =========================================================
+# CONFIG
+# =========================================================
 
 APP_NAME = "SAI Voice OS"
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-GITHUB_USERNAME = os.getenv("GITHUB_USERNAME", "")
+GITHUB_USERNAME = os.getenv(
+    "GITHUB_USERNAME",
+    ""
+)
 
-IS_STREAMLIT = st is not None
-
-
-# ============================================================
-# LOCAL WINDOWS TTS
-# ============================================================
-
-_engine = None
+GITHUB_TOKEN = os.getenv(
+    "GITHUB_TOKEN",
+    "" 
+)
 
 
-def local_tts_init():
+# =========================================================
+# WINDOWS TTS
+# =========================================================
 
-    global _engine
+tts_engine = None
+
+
+def initialize_windows_tts():
+
+    global tts_engine
 
     if pyttsx3 is None:
         return
 
     try:
-        _engine = pyttsx3.init()
 
-        voices = _engine.getProperty("voices")
+        tts_engine = pyttsx3.init()
+
+        voices = tts_engine.getProperty(
+            "voices"
+        )
 
         if voices:
-            _engine.setProperty("voice", voices[0].id)
 
-        _engine.setProperty("rate", 150)
-        _engine.setProperty("volume", 1.0)
+            tts_engine.setProperty(
+                "voice",
+                voices[0].id
+            )
+
+        tts_engine.setProperty(
+            "rate",
+            150
+        )
+
+        tts_engine.setProperty(
+            "volume",
+            1.0
+        )
 
     except Exception:
-        _engine = None
+
+        tts_engine = None
 
 
-def speak_local(text):
+# =========================================================
+# WINDOWS SPEAK
+# =========================================================
 
-    print(f"{APP_NAME}: {text}")
+def speak_windows(text):
 
-    if _engine is None:
+    if not text:
+        return
+
+    print(
+        f"SAI: {text}"
+    )
+
+    if tts_engine is None:
         return
 
     try:
-        _engine.say(text)
-        _engine.runAndWait()
+
+        tts_engine.say(text)
+        tts_engine.runAndWait()
 
     except Exception as e:
-        print("TTS error:", e)
+
+        print(
+            "TTS error:",
+            e
+        )
 
 
-# ============================================================
-# STREAMLIT BROWSER TTS
-# ============================================================
+# =========================================================
+# CLOUD BROWSER SPEAK
+# =========================================================
 
 def speak_cloud(text):
 
-    print(f"{APP_NAME}: {text}")
-
-    if not IS_STREAMLIT:
+    if not text:
         return
 
-    # Browser speech synthesis
+    if not STREAMLIT_MODE:
+        return
+
+    javascript_text = json.dumps(
+        str(text)
+    )
+
     html = f"""
     <script>
-        const text = {json.dumps(text)};
-        if ('speechSynthesis' in window) {{
-            window.speechSynthesis.cancel();
 
-            const utterance =
-                new SpeechSynthesisUtterance(text);
+        const message = {javascript_text};
 
-            utterance.lang = 'en-IN';
-            utterance.rate = 0.95;
-            utterance.pitch = 1.0;
+        function speakMessage() {{
 
-            window.speechSynthesis.speak(utterance);
+            if (
+                "speechSynthesis"
+                in window
+            ) {{
+
+                window.speechSynthesis.cancel();
+
+                const utterance =
+                    new SpeechSynthesisUtterance(
+                        message
+                    );
+
+                utterance.lang = "en-IN";
+
+                utterance.rate = 0.95;
+
+                utterance.pitch = 1.0;
+
+                utterance.volume = 1.0;
+
+                window.speechSynthesis.speak(
+                    utterance
+                );
+            }}
+
         }}
+
+        speakMessage();
+
     </script>
     """
 
@@ -182,17 +259,27 @@ def speak_cloud(text):
     )
 
 
+# =========================================================
+# UNIVERSAL SPEAK
+# =========================================================
+
 def speak(text):
 
-    if IS_STREAMLIT:
+    if not text:
+        return
+
+    if STREAMLIT_MODE:
+
         speak_cloud(text)
+
     else:
-        speak_local(text)
+
+        speak_windows(text)
 
 
-# ============================================================
-# DATE / TIME
-# ============================================================
+# =========================================================
+# TIME
+# =========================================================
 
 def get_time():
 
@@ -200,23 +287,31 @@ def get_time():
         "%I:%M %p"
     )
 
-    return f"The current time is {current_time}."
+    return (
+        f"The current time is "
+        f"{current_time}."
+    )
 
+
+# =========================================================
+# DATE
+# =========================================================
 
 def get_date():
 
     now = datetime.datetime.now()
 
     return (
-        f"Today is {now.day} "
+        f"Today is "
+        f"{now.day} "
         f"{now.strftime('%B')} "
         f"{now.year}."
     )
 
 
-# ============================================================
+# =========================================================
 # CALCULATOR
-# ============================================================
+# =========================================================
 
 def calculate(expression):
 
@@ -225,31 +320,42 @@ def calculate(expression):
         expression = expression.lower()
 
         expression = expression.replace(
-            "plus", "+"
+            "multiplied by",
+            "*"
         )
 
         expression = expression.replace(
-            "minus", "-"
+            "divided by",
+            "/"
         )
 
         expression = expression.replace(
-            "times", "*"
+            "times",
+            "*"
         )
 
         expression = expression.replace(
-            "multiplied by", "*"
+            "plus",
+            "+"
         )
 
         expression = expression.replace(
-            "divided by", "/"
+            "minus",
+            "-"
         )
 
-        # Allow only calculator characters
         expression = re.sub(
             r"[^0-9+\-*/().% ]",
             "",
             expression
         )
+
+        if not expression.strip():
+
+            return (
+                "I could not understand "
+                "the calculation."
+            )
 
         result = eval(
             expression,
@@ -259,16 +365,94 @@ def calculate(expression):
             {}
         )
 
-        return f"The answer is {result}."
+        return (
+            f"The answer is {result}."
+        )
 
     except Exception:
 
-        return "I could not calculate that."
+        return (
+            "I could not calculate that."
+        )
 
 
-# ============================================================
-# INTERNET SEARCH
-# ============================================================
+# =========================================================
+# OPEN URL
+# =========================================================
+
+def open_url(url, spoken_name):
+
+    if STREAMLIT_MODE:
+
+        # Open from user's browser.
+        # Popup blockers may prevent a new tab,
+        # so navigate the parent browser if needed.
+
+        html = f"""
+        <script>
+
+            const url = {json.dumps(url)};
+
+            try {{
+
+                window.open(
+                    url,
+                    "_blank"
+                );
+
+            }} catch (error) {{
+
+                window.parent.location.href =
+                    url;
+
+            }}
+
+        </script>
+        """
+
+        st.components.v1.html(
+            html,
+            height=1
+        )
+
+    else:
+
+        webbrowser.open(
+            url
+        )
+
+    return (
+        f"Opening {spoken_name}."
+    )
+
+
+# =========================================================
+# YOUTUBE
+# =========================================================
+
+def open_youtube():
+
+    return open_url(
+        "https://www.youtube.com",
+        "YouTube"
+    )
+
+
+# =========================================================
+# GOOGLE
+# =========================================================
+
+def open_google():
+
+    return open_url(
+        "https://www.google.com",
+        "Google"
+    )
+
+
+# =========================================================
+# GOOGLE SEARCH
+# =========================================================
 
 def google_search(query):
 
@@ -277,33 +461,41 @@ def google_search(query):
         + urllib.parse.quote(query)
     )
 
-    if not IS_STREAMLIT:
-        webbrowser.open(url)
+    return open_url(
+        url,
+        f"Google search for {query}"
+    )
 
-    return f"Searching Google for {query}."
 
+# =========================================================
+# YOUTUBE SEARCH
+# =========================================================
 
 def youtube_search(query):
 
     url = (
-        "https://www.youtube.com/results?search_query="
+        "https://www.youtube.com/results?"
+        "search_query="
         + urllib.parse.quote(query)
     )
 
-    if not IS_STREAMLIT:
-        webbrowser.open(url)
+    return open_url(
+        url,
+        f"YouTube search for {query}"
+    )
 
-    return f"Searching YouTube for {query}."
 
-
-# ============================================================
+# =========================================================
 # WIKIPEDIA
-# ============================================================
+# =========================================================
 
 def wikipedia_search(query):
 
     if wikipedia is None:
-        return "Wikipedia module is not installed."
+
+        return (
+            "Wikipedia is not available."
+        )
 
     try:
 
@@ -316,28 +508,35 @@ def wikipedia_search(query):
 
     except Exception:
 
-        return "I could not find that on Wikipedia."
+        return (
+            "I could not find that "
+            "on Wikipedia."
+        )
 
 
-# ============================================================
+# =========================================================
 # WEATHER
-# ============================================================
+# =========================================================
 
 def get_weather(city):
 
     try:
 
-        city_encoded = urllib.parse.quote(city)
+        city_encoded = urllib.parse.quote(
+            city
+        )
 
         url = (
-            f"https://wttr.in/{city_encoded}"
-            "?format=j1"
+            f"https://wttr.in/"
+            f"{city_encoded}"
+            f"?format=j1"
         )
 
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "Mozilla/5.0"
+                "User-Agent":
+                    "Mozilla/5.0"
             }
         )
 
@@ -354,62 +553,74 @@ def get_weather(city):
             "current_condition"
         ][0]
 
-        temperature = current["temp_C"]
+        temperature = current[
+            "temp_C"
+        ]
 
         description = current[
             "weatherDesc"
         ][0]["value"]
 
         return (
-            f"The current temperature in "
-            f"{city} is {temperature} "
-            f"degrees Celsius with "
+            f"The current temperature "
+            f"in {city} is "
+            f"{temperature} degrees "
+            f"Celsius with "
             f"{description}."
         )
 
     except Exception:
 
         return (
-            "Sorry, I could not fetch "
-            "the weather."
+            "Sorry, I could not "
+            "fetch the weather."
         )
 
 
-# ============================================================
+# =========================================================
 # DOCUMENT READER
-# ============================================================
+# =========================================================
 
 def read_pdf_bytes(data):
 
     if PdfReader is None:
-        return "PDF reader is not installed."
+
+        return (
+            "PDF reader is not installed."
+        )
 
     try:
 
-        pdf = PdfReader(
+        reader = PdfReader(
             io.BytesIO(data)
         )
 
         text = []
 
-        for index, page in enumerate(
-            pdf.pages
+        for page_number, page in enumerate(
+            reader.pages,
+            start=1
         ):
 
-            page_text = page.extract_text()
+            page_text = (
+                page.extract_text()
+                or ""
+            )
 
-            if page_text:
+            if page_text.strip():
 
                 text.append(
-                    f"Page {index + 1}\n"
+                    f"Page {page_number}. "
                     f"{page_text}"
                 )
 
-        return "\n\n".join(text)
+        return "\n".join(text)
 
     except Exception as e:
 
-        return f"Could not read PDF: {e}"
+        return (
+            f"Could not read PDF. {e}"
+        )
 
 
 def read_txt_bytes(data):
@@ -421,50 +632,74 @@ def read_txt_bytes(data):
             errors="ignore"
         )
 
-    except Exception as e:
+    except Exception:
 
-        return f"Could not read text file: {e}"
+        return (
+            "Could not read text file."
+        )
 
 
 def read_docx_bytes(data):
 
     if Document is None:
-        return "DOCX reader is not installed."
+
+        return (
+            "Word document reader "
+            "is not installed."
+        )
+
+    temp_path = None
 
     try:
 
-        temp = tempfile.NamedTemporaryFile(
+        with tempfile.NamedTemporaryFile(
             delete=False,
             suffix=".docx"
-        )
+        ) as temp:
 
-        temp.write(data)
-        temp.close()
+            temp.write(data)
+
+            temp_path = temp.name
 
         document = Document(
-            temp.name
+            temp_path
         )
 
-        text = []
+        paragraphs = []
 
         for paragraph in document.paragraphs:
 
             if paragraph.text.strip():
 
-                text.append(
+                paragraphs.append(
                     paragraph.text
                 )
 
-        os.unlink(temp.name)
+        return "\n".join(
+            paragraphs
+        )
 
-        return "\n".join(text)
+    except Exception:
 
-    except Exception as e:
+        return (
+            "Could not read the "
+            "Word document."
+        )
 
-        return f"Could not read DOCX: {e}"
+    finally:
+
+        if temp_path:
+
+            try:
+
+                os.unlink(temp_path)
+
+            except Exception:
+
+                pass
 
 
-def read_uploaded_document(
+def read_document(
     filename,
     data
 ):
@@ -475,25 +710,31 @@ def read_uploaded_document(
 
     if extension == ".pdf":
 
-        return read_pdf_bytes(data)
+        return read_pdf_bytes(
+            data
+        )
 
     if extension == ".txt":
 
-        return read_txt_bytes(data)
+        return read_txt_bytes(
+            data
+        )
 
     if extension == ".docx":
 
-        return read_docx_bytes(data)
+        return read_docx_bytes(
+            data
+        )
 
     return (
-        "This document format is "
-        "not supported yet."
+        "This document format "
+        "is not supported."
     )
 
 
-# ============================================================
-# GITHUB
-# ============================================================
+# =========================================================
+# GITHUB HEADERS
+# =========================================================
 
 def github_headers():
 
@@ -504,19 +745,27 @@ def github_headers():
 
     if GITHUB_TOKEN:
 
-        headers["Authorization"] = (
+        headers[
+            "Authorization"
+        ] = (
             f"Bearer {GITHUB_TOKEN}"
         )
 
     return headers
 
 
-def github_list_repositories():
+# =========================================================
+# GITHUB REPOSITORIES
+# =========================================================
+
+def github_repositories():
 
     if requests is None:
+
         return []
 
     if not GITHUB_USERNAME:
+
         return []
 
     try:
@@ -533,6 +782,7 @@ def github_list_repositories():
         )
 
         if response.status_code != 200:
+
             return []
 
         data = response.json()
@@ -547,15 +797,21 @@ def github_list_repositories():
         return []
 
 
-def github_list_files(
+# =========================================================
+# GITHUB FILE LIST
+# =========================================================
+
+def github_files(
     repository,
     path=""
 ):
 
     if requests is None:
+
         return []
 
     if not GITHUB_USERNAME:
+
         return []
 
     try:
@@ -574,6 +830,7 @@ def github_list_files(
         )
 
         if response.status_code != 200:
+
             return []
 
         return response.json()
@@ -583,12 +840,17 @@ def github_list_files(
         return []
 
 
+# =========================================================
+# GITHUB READ FILE
+# =========================================================
+
 def github_read_file(
     repository,
     path
 ):
 
     if requests is None:
+
         return None
 
     try:
@@ -607,13 +869,14 @@ def github_read_file(
         )
 
         if response.status_code != 200:
+
             return None
 
         data = response.json()
 
-        if data.get("encoding") == "base64":
-
-            import base64
+        if data.get(
+            "encoding"
+        ) == "base64":
 
             content = base64.b64decode(
                 data["content"]
@@ -624,29 +887,35 @@ def github_read_file(
                 errors="ignore"
             )
 
-        return data.get("content", "")
+        return data.get(
+            "content",
+            ""
+        )
 
     except Exception:
 
         return None
 
 
-def github_upload_file(
+# =========================================================
+# GITHUB UPLOAD
+# =========================================================
+
+def github_upload(
     repository,
     path,
-    content,
-    commit_message="Upload from SAI Voice OS"
+    content
 ):
 
     if requests is None:
-        return False, "Requests is not installed."
+
+        return False
 
     if not GITHUB_TOKEN:
-        return False, "GitHub token is not configured."
+
+        return False
 
     try:
-
-        import base64
 
         encoded = base64.b64encode(
             content
@@ -659,7 +928,6 @@ def github_upload_file(
             f"{path}"
         )
 
-        # Check whether file exists
         existing = requests.get(
             url,
             headers=github_headers(),
@@ -667,15 +935,21 @@ def github_upload_file(
         )
 
         payload = {
-            "message": commit_message,
-            "content": encoded
+            "message":
+                "Uploaded by SAI Voice OS",
+            "content":
+                encoded
         }
 
         if existing.status_code == 200:
 
-            old_data = existing.json()
+            old_data = (
+                existing.json()
+            )
 
-            payload["sha"] = old_data["sha"]
+            payload["sha"] = (
+                old_data["sha"]
+            )
 
         response = requests.put(
             url,
@@ -684,109 +958,149 @@ def github_upload_file(
             timeout=15
         )
 
-        if response.status_code in [
+        return response.status_code in [
             200,
             201
-        ]:
-
-            return True, "File uploaded to GitHub."
-
-        return (
-            False,
-            f"GitHub error: {response.status_code}"
-        )
-
-    except Exception as e:
-
-        return False, str(e)
-
-
-# ============================================================
-# WINDOWS LOCAL FILES
-# ============================================================
-
-def local_documents():
-
-    if platform.system() != "Windows":
-
-        return []
-
-    path = os.path.expanduser(
-        "~/Documents"
-    )
-
-    try:
-
-        return os.listdir(path)
+        ]
 
     except Exception:
 
-        return []
+        return False
 
 
-def open_windows_application(
-    application
+# =========================================================
+# WINDOWS APPLICATIONS
+# =========================================================
+
+def windows_open_application(
+    app
 ):
 
-    if platform.system() != "Windows":
+    if not WINDOWS_MODE:
 
         return (
-            "Windows applications are "
-            "available only in local mode."
+            "That application is "
+            "available on your "
+            "Windows computer."
         )
 
-    application = application.lower()
+    app = app.lower()
 
-    if "notepad" in application:
+    try:
 
-        subprocess.Popen(
-            ["notepad.exe"]
+        if "notepad" in app:
+
+            subprocess.Popen(
+                ["notepad.exe"]
+            )
+
+            return (
+                "Opening Notepad."
+            )
+
+        if "calculator" in app:
+
+            subprocess.Popen(
+                ["calc.exe"]
+            )
+
+            return (
+                "Opening Calculator."
+            )
+
+        if (
+            "chrome" in app
+            or "browser" in app
+        ):
+
+            subprocess.Popen(
+                [
+                    "cmd",
+                    "/c",
+                    "start",
+                    "chrome"
+                ]
+            )
+
+            return (
+                "Opening Chrome."
+            )
+
+        if "explorer" in app:
+
+            subprocess.Popen(
+                ["explorer.exe"]
+            )
+
+            return (
+                "Opening File Explorer."
+            )
+
+    except Exception:
+
+        return (
+            "I could not open "
+            "that application."
         )
-
-        return "Opening Notepad."
-
-    if "calculator" in application:
-
-        subprocess.Popen(
-            ["calc.exe"]
-        )
-
-        return "Opening Calculator."
-
-    if (
-        "chrome" in application
-        or "browser" in application
-    ):
-
-        subprocess.Popen(
-            ["cmd", "/c", "start", "chrome"]
-        )
-
-        return "Opening Chrome."
 
     return (
-        "That Windows application "
-        "is not mapped yet."
+        "That application is "
+        "not configured yet."
     )
 
 
-# ============================================================
-# WINDOWS SCREENSHOT
-# ============================================================
+# =========================================================
+# WINDOWS WHATSAPP
+# =========================================================
 
-def take_screenshot():
+def open_whatsapp():
+
+    if WINDOWS_MODE:
+
+        try:
+
+            subprocess.Popen(
+                [
+                    "cmd",
+                    "/c",
+                    "start",
+                    "whatsapp:"
+                ]
+            )
+
+            return (
+                "Opening WhatsApp."
+            )
+
+        except Exception:
+
+            pass
+
+    return open_url(
+        "https://web.whatsapp.com",
+        "WhatsApp Web"
+    )
+
+
+# =========================================================
+# WINDOWS SCREENSHOT
+# =========================================================
+
+def windows_screenshot():
+
+    if not WINDOWS_MODE:
+
+        return (
+            "Screenshot is available "
+            "when SAI Voice OS is running "
+            "on your Windows computer."
+        )
 
     if pyautogui is None:
 
         return (
-            "Screenshot module is not installed."
-        )
-
-    if platform.system() != "Windows":
-
-        return (
-            "Screenshot is available "
-            "in Windows local mode."
+            "Screenshot support "
+            "is not installed."
         )
 
     try:
@@ -801,7 +1115,7 @@ def take_screenshot():
         )
 
         filename = (
-            "sai_screenshot_"
+            "SAI_Screenshot_"
             + datetime.datetime.now().strftime(
                 "%Y%m%d_%H%M%S"
             )
@@ -818,17 +1132,185 @@ def take_screenshot():
         image.save(path)
 
         return (
-            f"Screenshot saved as {path}."
+            "Screenshot taken "
+            "successfully."
         )
 
-    except Exception as e:
+    except Exception:
 
-        return f"Screenshot failed: {e}"
+        return (
+            "I could not take "
+            "the screenshot."
+        )
 
 
-# ============================================================
+# =========================================================
+# WINDOWS LOCAL FILES
+# =========================================================
+
+def get_local_files():
+
+    if not WINDOWS_MODE:
+
+        return []
+
+    documents = os.path.expanduser(
+        "~/Documents"
+    )
+
+    try:
+
+        return os.listdir(
+            documents
+        )
+
+    except Exception:
+
+        return []
+
+
+# =========================================================
+# READ LOCAL FILE
+# =========================================================
+
+def read_local_file(filename):
+
+    if not WINDOWS_MODE:
+
+        return (
+            "Local files are available "
+            "when SAI Voice OS is running "
+            "on your Windows computer."
+        )
+
+    documents = os.path.expanduser(
+        "~/Documents"
+    )
+
+    path = os.path.join(
+        documents,
+        filename
+    )
+
+    if not os.path.exists(path):
+
+        return (
+            "I could not find that file "
+            "in your Documents folder."
+        )
+
+    try:
+
+        extension = os.path.splitext(
+            filename
+        )[1].lower()
+
+        if extension == ".txt":
+
+            with open(
+                path,
+                "r",
+                encoding="utf-8",
+                errors="ignore"
+            ) as file:
+
+                return file.read()
+
+        if extension == ".pdf":
+
+            with open(
+                path,
+                "rb"
+            ) as file:
+
+                return read_pdf_bytes(
+                    file.read()
+                )
+
+        if extension == ".docx":
+
+            with open(
+                path,
+                "rb"
+            ) as file:
+
+                return read_docx_bytes(
+                    file.read()
+                )
+
+        return (
+            "I can currently read "
+            "PDF, TXT and DOCX files."
+        )
+
+    except Exception:
+
+        return (
+            "I could not read "
+            "that file."
+        )
+
+
+# =========================================================
+# WINDOWS NOTES
+# =========================================================
+
+def save_local_note(note):
+
+    if not WINDOWS_MODE:
+
+        return (
+            "Notes are available "
+            "in Windows local mode."
+        )
+
+    try:
+
+        desktop = os.path.expanduser(
+            "~/Desktop"
+        )
+
+        os.makedirs(
+            desktop,
+            exist_ok=True
+        )
+
+        path = os.path.join(
+            desktop,
+            "SAI_Notes.txt"
+        )
+
+        timestamp = datetime.datetime.now().strftime(
+            "%Y-%m-%d %H:%M"
+        )
+
+        with open(
+            path,
+            "a",
+            encoding="utf-8"
+        ) as file:
+
+            file.write(
+                f"[{timestamp}] "
+                f"{note}\n"
+            )
+
+        return (
+            "Your note has been "
+            "saved to the desktop."
+        )
+
+    except Exception:
+
+        return (
+            "I could not save "
+            "the note."
+        )
+
+
+# =========================================================
 # WINDOWS MICROPHONE
-# ============================================================
+# =========================================================
 
 def listen_windows():
 
@@ -842,7 +1324,9 @@ def listen_windows():
 
         with sr.Microphone() as source:
 
-            print("Listening...")
+            print(
+                "Listening..."
+            )
 
             recognizer.adjust_for_ambient_noise(
                 source,
@@ -851,252 +1335,418 @@ def listen_windows():
 
             audio = recognizer.listen(
                 source,
-                timeout=5,
-                phrase_time_limit=10
+                timeout=8,
+                phrase_time_limit=12
             )
 
-        print("Recognizing...")
-
-        text = recognizer.recognize_google(
-            audio,
-            language="en-IN"
+        print(
+            "Recognizing..."
         )
 
-        print("YOU:", text)
+        command = (
+            recognizer
+            .recognize_google(
+                audio,
+                language="en-IN"
+            )
+        )
 
-        return text.lower()
+        return command.lower()
+
+    except sr.UnknownValueError:
+
+        speak(
+            "Sorry, I could not "
+            "understand you."
+        )
+
+    except sr.WaitTimeoutError:
+
+        pass
+
+    except sr.RequestError:
+
+        speak(
+            "Speech recognition "
+            "service is unavailable."
+        )
 
     except Exception as e:
 
-        print("Voice error:", e)
-
-        speak(
-            "I could not understand "
-            "your voice."
+        print(
+            "Microphone error:",
+            e
         )
 
-        return None
+    return None
 
 
-# ============================================================
-# WINDOWS WHATSAPP
-# ============================================================
+# =========================================================
+# EXTRACT QUERY
+# =========================================================
 
-def open_whatsapp():
+def remove_prefix(
+    command,
+    prefixes
+):
 
-    if platform.system() != "Windows":
+    for prefix in prefixes:
 
-        return (
-            "WhatsApp desktop is available "
-            "in Windows local mode."
-        )
+        if command.startswith(prefix):
 
-    try:
+            return command[
+                len(prefix):
+            ].strip()
 
-        subprocess.Popen(
-            [
-                "cmd",
-                "/c",
-                "start",
-                "whatsapp:"
-            ]
-        )
-
-        return "Opening WhatsApp."
-
-    except Exception:
-
-        webbrowser.open(
-            "https://web.whatsapp.com"
-        )
-
-        return "Opening WhatsApp Web."
+    return ""
 
 
-# ============================================================
-# COMMAND PROCESSOR
-# ============================================================
+# =========================================================
+# COMMAND ENGINE
+# =========================================================
 
 def process_command(command):
 
+    if not command:
+
+        return (
+            "I did not hear a command."
+        )
+
+
     command = command.lower().strip()
 
-    if not command:
-        return "I did not hear a command."
 
+    # -----------------------------------------------------
     # EXIT
+    # -----------------------------------------------------
 
     if command in [
         "exit",
         "quit",
+        "stop",
         "go offline",
-        "stop"
+        "goodbye"
     ]:
 
         return "__EXIT__"
 
+
+    # -----------------------------------------------------
     # TIME
+    # -----------------------------------------------------
 
-    if "what time" in command:
+    if (
+        "what time" in command
+        or command == "time"
+    ):
+
         return get_time()
 
-    if command == "time":
-        return get_time()
 
+    # -----------------------------------------------------
     # DATE
+    # -----------------------------------------------------
 
-    if "what is the date" in command:
+    if (
+        "what is the date" in command
+        or command == "date"
+    ):
+
         return get_date()
 
-    if command == "date":
-        return get_date()
 
-    # CALCULATOR
-
-    if command.startswith("calculate"):
-
-        expression = command[
-            len("calculate"):
-        ].strip()
-
-        return calculate(expression)
-
-    # WINDOWS APPS
-
-    if (
-        "open notepad" in command
-        and not IS_STREAMLIT
-    ):
-
-        return open_windows_application(
-            "notepad"
-        )
-
-    if (
-        "open calculator" in command
-        and not IS_STREAMLIT
-    ):
-
-        return open_windows_application(
-            "calculator"
-        )
-
-    if (
-        "open chrome" in command
-        and not IS_STREAMLIT
-    ):
-
-        return open_windows_application(
-            "chrome"
-        )
-
-    # WHATSAPP
-
-    if (
-        "open whatsapp" in command
-        and not IS_STREAMLIT
-    ):
-
-        return open_whatsapp()
-
-    # SCREENSHOT
-
-    if (
-        "take screenshot" in command
-        or "screenshot" in command
-    ):
-
-        if IS_STREAMLIT:
-
-            return (
-                "Screenshot is available "
-                "when SAI Voice OS is running "
-                "on your Windows computer."
-            )
-
-        return take_screenshot()
-
-    # GOOGLE
-
-    if command.startswith(
-        "search google for"
-    ):
-
-        query = command.replace(
-            "search google for",
-            "",
-            1
-        ).strip()
-
-        return google_search(query)
-
-    if command.startswith("search"):
-
-        query = command.replace(
-            "search",
-            "",
-            1
-        ).strip()
-
-        return google_search(query)
-
+    # -----------------------------------------------------
     # YOUTUBE
+    # -----------------------------------------------------
 
-    if command.startswith(
-        "play on youtube"
+    if any(
+        phrase in command
+        for phrase in [
+            "open youtube",
+            "launch youtube",
+            "start youtube"
+        ]
     ):
 
-        query = command.replace(
+        return open_youtube()
+
+
+    # -----------------------------------------------------
+    # GOOGLE
+    # -----------------------------------------------------
+
+    if any(
+        phrase in command
+        for phrase in [
+            "open google",
+            "launch google",
+            "start google"
+        ]
+    ):
+
+        return open_google()
+
+
+    # -----------------------------------------------------
+    # GOOGLE SEARCH
+    # -----------------------------------------------------
+
+    query = remove_prefix(
+        command,
+        [
+            "search google for",
+            "search google",
+            "google search for"
+        ]
+    )
+
+    if query:
+
+        return google_search(
+            query
+        )
+
+
+    # -----------------------------------------------------
+    # YOUTUBE SEARCH
+    # -----------------------------------------------------
+
+    query = remove_prefix(
+        command,
+        [
+            "search youtube for",
+            "search youtube",
             "play on youtube",
-            "",
-            1
-        ).strip()
+            "play youtube"
+        ]
+    )
 
-        return youtube_search(query)
+    if query:
 
+        return youtube_search(
+            query
+        )
+
+
+    # -----------------------------------------------------
     # WIKIPEDIA
+    # -----------------------------------------------------
 
-    if command.startswith(
-        "wikipedia"
-    ):
-
-        query = command.replace(
+    query = remove_prefix(
+        command,
+        [
             "wikipedia",
-            "",
-            1
-        ).strip()
+            "search wikipedia for"
+        ]
+    )
 
-        return wikipedia_search(query)
+    if query:
 
+        return wikipedia_search(
+            query
+        )
+
+
+    # -----------------------------------------------------
     # WEATHER
+    # -----------------------------------------------------
 
     if "weather" in command:
 
         city = "Guntur"
 
-        words = command.split()
+        match = re.search(
+            r"weather(?:\s+in)?\s+(.+)",
+            command
+        )
 
-        if "in" in words:
+        if match:
 
-            index = words.index("in")
+            city = match.group(
+                1
+            ).strip()
 
-            if index + 1 < len(words):
+        return get_weather(
+            city
+        )
 
-                city = " ".join(
-                    words[index + 1:]
-                )
 
-        return get_weather(city)
+    # -----------------------------------------------------
+    # CALCULATOR
+    # -----------------------------------------------------
 
-    # GITHUB
+    if command.startswith(
+        "calculate"
+    ):
+
+        expression = command[
+            len("calculate"):
+        ].strip()
+
+        return calculate(
+            expression
+        )
+
+
+    if (
+        "open calculator"
+        in command
+        or
+        "open the calculator"
+        in command
+    ):
+
+        if WINDOWS_MODE:
+
+            return windows_open_application(
+                "calculator"
+            )
+
+        return (
+            "The calculator is "
+            "available on your Windows "
+            "computer."
+        )
+
+
+    # -----------------------------------------------------
+    # NOTEPAD
+    # -----------------------------------------------------
+
+    if (
+        "open notepad"
+        in command
+    ):
+
+        return windows_open_application(
+            "notepad"
+        )
+
+
+    # -----------------------------------------------------
+    # CHROME
+    # -----------------------------------------------------
+
+    if (
+        "open chrome"
+        in command
+    ):
+
+        return windows_open_application(
+            "chrome"
+        )
+
+
+    # -----------------------------------------------------
+    # WHATSAPP
+    # -----------------------------------------------------
+
+    if (
+        "open whatsapp"
+        in command
+    ):
+
+        return open_whatsapp()
+
+
+    # -----------------------------------------------------
+    # SCREENSHOT
+    # -----------------------------------------------------
+
+    if (
+        "take screenshot"
+        in command
+        or
+        command == "screenshot"
+    ):
+
+        return windows_screenshot()
+
+
+    # -----------------------------------------------------
+    # LOCAL FILES
+    # -----------------------------------------------------
+
+    if any(
+        phrase in command
+        for phrase in [
+            "list my files",
+            "show my files",
+            "list files",
+            "show files",
+            "what files do i have"
+        ]
+    ):
+
+        files = get_local_files()
+
+        if not files:
+
+            return (
+                "I could not find any "
+                "files in your Documents folder."
+            )
+
+        readable_files = files[:10]
+
+        return (
+            f"I found {len(files)} files. "
+            f"The first files are "
+            + ", ".join(
+                readable_files
+            )
+        )
+
+
+    # -----------------------------------------------------
+    # READ LOCAL FILE
+    # -----------------------------------------------------
+
+    match = re.search(
+        r"(?:read|open)\s+(?:file\s+)?(.+)",
+        command
+    )
+
+    if match:
+
+        filename = match.group(
+            1
+        ).strip()
+
+        # Don't interpret normal commands as filenames
+        if not filename.startswith(
+            (
+                "youtube",
+                "google",
+                "calculator",
+                "notepad",
+                "whatsapp"
+            )
+        ):
+
+            return read_local_file(
+                filename
+            )
+
+
+    # -----------------------------------------------------
+    # GITHUB REPOSITORIES
+    # -----------------------------------------------------
 
     if (
         "list github repositories"
         in command
+        or
+        "show my github repositories"
+        in command
+        or
+        "my github repositories"
+        in command
     ):
 
         repos = (
-            github_list_repositories()
+            github_repositories()
         )
 
         if not repos:
@@ -1107,363 +1757,229 @@ def process_command(command):
             )
 
         return (
-            "Your GitHub repositories are: "
+            "Your GitHub repositories are "
             + ", ".join(repos)
         )
 
+
+    # -----------------------------------------------------
+    # GITHUB FILES
+    # -----------------------------------------------------
+
+    match = re.search(
+        r"(?:list|show)\s+files\s+in\s+github\s+(.+)",
+        command
+    )
+
+    if match:
+
+        repository = match.group(
+            1
+        ).strip()
+
+        files = github_files(
+            repository
+        )
+
+        if not files:
+
+            return (
+                "I could not find files "
+                "in that repository."
+            )
+
+        names = []
+
+        for item in files[:10]:
+
+            names.append(
+                item.get(
+                    "name",
+                    "unknown"
+                )
+            )
+
+        return (
+            "The files are "
+            + ", ".join(names)
+        )
+
+
+    # -----------------------------------------------------
     # UNKNOWN
+    # -----------------------------------------------------
 
     return (
-        "I understand the command, "
-        "but that feature has not been "
-        "implemented yet."
+        "I do not understand that "
+        "command yet."
     )
 
 
-# ============================================================
+# =========================================================
+# CLOUD VOICE PROCESSING
+# =========================================================
+
+def process_cloud_audio(
+    audio_bytes
+):
+
+    if sr is None:
+
+        return (
+            "Speech recognition "
+            "is not installed."
+        )
+
+    try:
+
+        recognizer = sr.Recognizer()
+
+        with sr.AudioFile(
+            io.BytesIO(audio_bytes)
+        ) as source:
+
+            audio = recognizer.record(
+                source
+            )
+
+        command = (
+            recognizer
+            .recognize_google(
+                audio,
+                language="en-IN"
+            )
+        )
+
+        response = process_command(
+            command
+        )
+
+        if response == "__EXIT__":
+
+            return (
+                "SAI Voice OS is "
+                "going offline."
+            )
+
+        return response
+
+    except sr.UnknownValueError:
+
+        return (
+            "Sorry, I could not "
+            "understand you."
+        )
+
+    except sr.RequestError:
+
+        return (
+            "Speech recognition "
+            "service is unavailable."
+        )
+
+    except Exception as e:
+
+        return (
+            "I could not process "
+            "your voice command."
+        )
+
+
+# =========================================================
 # STREAMLIT UI
-# ============================================================
+# =========================================================
 
 def streamlit_app():
 
     st.set_page_config(
         page_title="SAI Voice OS",
         page_icon="🎙️",
-        layout="wide"
+        layout="centered"
     )
 
-    st.title("🎙️ SAI Voice OS")
 
-    st.caption(
-        "Voice-first accessibility operating system"
-    )
+    # -----------------------------------------------------
+    # MINIMAL UI
+    # -----------------------------------------------------
 
-    # -------------------------
-    # Sidebar
-    # -------------------------
-
-    st.sidebar.title("SAI Voice OS")
-
-    st.sidebar.info(
+    st.markdown(
         """
-Cloud Mode
+        <style>
 
-Available:
-• Internet
-• Search
-• Wikipedia
-• Weather
-• GitHub
-• PDF
-• TXT
-• DOCX
-• Calculator
+        #MainMenu {
+            visibility: hidden;
+        }
 
-Windows-only:
-• Microphone hardware
-• Local files
-• Screenshot
-• WhatsApp desktop
-• Windows applications
-"""
+        footer {
+            visibility: hidden;
+        }
+
+        header {
+            visibility: hidden;
+        }
+
+        .stApp {
+            text-align: center;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True
     )
 
-    # -------------------------
-    # Session State
-    # -------------------------
 
-    if "history" not in st.session_state:
+    # -----------------------------------------------------
+    # VOICE ONLY INTRO
+    # -----------------------------------------------------
 
-        st.session_state.history = []
+    if "started" not in st.session_state:
 
-    if "document_text" not in st.session_state:
+        st.session_state.started = False
 
-        st.session_state.document_text = ""
 
-    # -------------------------
-    # Voice Input
-    # -------------------------
+    if "last_response" not in st.session_state:
 
-    st.header("🎤 Voice Command")
+        st.session_state.last_response = ""
+
+
+    # -----------------------------------------------------
+    # MICROPHONE
+    # -----------------------------------------------------
 
     audio = st.audio_input(
-        "Speak to SAI"
+        "🎙️"
     )
+
 
     if audio is not None:
 
-        if sr is None:
-
-            st.error(
-                "SpeechRecognition is not installed."
-            )
-
-        else:
-
-            try:
-
-                recognizer = sr.Recognizer()
-
-                audio_bytes = (
-                    audio.getvalue()
-                )
-
-                with sr.AudioFile(
-                    io.BytesIO(audio_bytes)
-                ) as source:
-
-                    recorded_audio = (
-                        recognizer.record(source)
-                    )
-
-                command = (
-                    recognizer
-                    .recognize_google(
-                        recorded_audio,
-                        language="en-IN"
-                    )
-                )
-
-                command = command.lower()
-
-                st.write(
-                    f"**You:** {command}"
-                )
-
-                response = process_command(
-                    command
-                )
-
-                if response == "__EXIT__":
-
-                    response = (
-                        "SAI Voice OS is going offline."
-                    )
-
-                st.session_state.history.append(
-                    {
-                        "user": command,
-                        "sai": response
-                    }
-                )
-
-                st.success(response)
-
-                speak_cloud(response)
-
-            except Exception as e:
-
-                st.error(
-                    f"Voice recognition failed: {e}"
-                )
-
-    # -------------------------
-    # Text Command
-    # -------------------------
-
-    st.header("⌨️ Text Command")
-
-    command = st.text_input(
-        "Type a command"
-    )
-
-    if st.button("Run Command"):
-
-        if command:
-
-            response = process_command(
-                command
-            )
-
-            st.session_state.history.append(
-                {
-                    "user": command,
-                    "sai": response
-                }
-            )
-
-            st.success(response)
-
-            speak_cloud(response)
-
-    # -------------------------
-    # Documents
-    # -------------------------
-
-    st.header("📄 Documents")
-
-    uploaded_file = st.file_uploader(
-        "Upload PDF / TXT / DOCX",
-        type=[
-            "pdf",
-            "txt",
-            "docx"
-        ]
-    )
-
-    if uploaded_file is not None:
-
-        data = uploaded_file.read()
-
-        text = read_uploaded_document(
-            uploaded_file.name,
-            data
+        response = process_cloud_audio(
+            audio.getvalue()
         )
 
-        st.session_state.document_text = text
-
-        st.success(
-            f"{uploaded_file.name} loaded."
+        st.session_state.last_response = (
+            response
         )
 
-    if st.session_state.document_text:
-
-        st.text_area(
-            "Document content",
-            st.session_state.document_text,
-            height=400
+        speak_cloud(
+            response
         )
 
-        if st.button(
-            "🔊 Read Document"
-        ):
 
-            text = (
-                st.session_state.document_text
-            )
-
-            # Limit browser speech size
-            text_to_speak = text[:5000]
-
-            speak_cloud(
-                text_to_speak
-            )
-
-    # -------------------------
-    # GitHub
-    # -------------------------
-
-    st.header("🐙 GitHub")
-
-    if GITHUB_USERNAME:
-
-        repos = (
-            github_list_repositories()
-        )
-
-        if repos:
-
-            repository = st.selectbox(
-                "Repository",
-                repos
-            )
-
-            if st.button(
-                "List Repository Files"
-            ):
-
-                files = (
-                    github_list_files(
-                        repository
-                    )
-                )
-
-                if files:
-
-                    for item in files:
-
-                        st.write(
-                            f"{item['type']}: "
-                            f"{item['path']}"
-                        )
-
-                else:
-
-                    st.warning(
-                        "No files found."
-                    )
-
-            github_file = st.file_uploader(
-                "Upload a file to GitHub",
-                key="github_upload"
-            )
-
-            github_path = st.text_input(
-                "GitHub destination path",
-                placeholder="documents/file.pdf"
-            )
-
-            if st.button(
-                "Upload to GitHub"
-            ):
-
-                if github_file and github_path:
-
-                    content = (
-                        github_file.read()
-                    )
-
-                    success, message = (
-                        github_upload_file(
-                            repository,
-                            github_path,
-                            content
-                        )
-                    )
-
-                    if success:
-
-                        st.success(message)
-
-                    else:
-
-                        st.error(message)
-
-        else:
-
-            st.warning(
-                "No GitHub repositories found."
-            )
-
-    else:
-
-        st.info(
-            "Set GITHUB_USERNAME and "
-            "GITHUB_TOKEN in Streamlit Secrets."
-        )
-
-    # -------------------------
-    # Command History
-    # -------------------------
-
-    st.header("🧠 Conversation")
-
-    for item in reversed(
-        st.session_state.history
-    ):
-
-        st.write(
-            f"👤 **You:** {item['user']}"
-        )
-
-        st.write(
-            f"🤖 **SAI:** {item['sai']}"
-        )
-
-        st.divider()
-
-
-# ============================================================
+# =========================================================
 # WINDOWS MODE
-# ============================================================
+# =========================================================
 
-def windows_mode():
+def windows_app():
 
-    local_tts_init()
+    initialize_windows_tts()
 
     speak(
-        "Welcome to SAI Voice OS. "
-        "Windows local mode is active."
+        "Welcome to SAI Voice OS."
+    )
+
+    speak(
+        "Voice mode is active."
     )
 
     while True:
@@ -1471,6 +1987,7 @@ def windows_mode():
         command = listen_windows()
 
         if not command:
+
             continue
 
         response = process_command(
@@ -1480,34 +1997,27 @@ def windows_mode():
         if response == "__EXIT__":
 
             speak(
-                "SAI Voice OS is going offline."
+                "SAI Voice OS is "
+                "going offline."
             )
 
             break
 
-        print(
-            f"SAI: {response}"
+        speak(
+            response
         )
 
-        speak(response)
 
-
-# ============================================================
-# ENTRY POINT
-# ============================================================
+# =========================================================
+# MAIN
+# =========================================================
 
 if __name__ == "__main__":
 
-    # If executed using:
-    #
-    # streamlit run sai_voiceos.py
-    #
-    # Streamlit mode runs.
-
-    if IS_STREAMLIT:
+    if STREAMLIT_MODE:
 
         streamlit_app()
 
     else:
 
-        windows_mode()
+        windows_app()
