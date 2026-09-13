@@ -5,4 +5,3 @@ wikipedia
 PyPDF2
 python-docx
 pyttsx3
-pyautogui
