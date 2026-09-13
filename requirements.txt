@@ -1,4 +1,6 @@
+streamlit
 SpeechRecognition
-pyttsx3
-PyAudio
-pyautogui
+requests
+wikipedia
+PyPDF2
+python-docx
