@@ -1,268 +1,122 @@
+# ============================================================
+#                    SAI VOICE OS
+#              ALWAYS LISTENING WINDOWS OS
+# ============================================================
+
 import os
-import io
 import re
-import json
-import base64
 import time
-import queue
-import threading
-import datetime
 import webbrowser
-import urllib.parse
-import urllib.request
 import subprocess
-import tempfile
+import datetime
+import urllib.parse
 import platform
 
-import streamlit as st
-
-from streamlit_webrtc import (
-    webrtc_streamer,
-    WebRtcMode,
-    AudioProcessorBase,
-    RTCConfiguration,
-    MediaStreamConstraints
-)
-
-import numpy as np
 import speech_recognition as sr
+import pyttsx3
+import pyautogui
 
 
 # ============================================================
-# OPTIONAL WINDOWS MODULES
+# SYSTEM CHECK
 # ============================================================
 
-IS_WINDOWS = (
-    platform.system().lower() == "windows"
+if platform.system().lower() != "windows":
+
+    print("SAI Voice OS is designed for Windows.")
+
+    raise SystemExit
+
+
+# ============================================================
+# SAI CONFIGURATION
+# ============================================================
+
+SAI_NAME = "SAI"
+
+LANGUAGE = "en-IN"
+
+LISTEN_TIMEOUT = 5
+
+PHRASE_TIME_LIMIT = 10
+
+VOICE_RATE = 155
+
+VOICE_VOLUME = 1.0
+
+
+# ============================================================
+# SPEECH RECOGNIZER
+# ============================================================
+
+recognizer = sr.Recognizer()
+
+recognizer.energy_threshold = 300
+
+recognizer.dynamic_energy_threshold = True
+
+recognizer.pause_threshold = 0.8
+
+recognizer.phrase_threshold = 0.3
+
+recognizer.non_speaking_duration = 0.5
+
+
+# ============================================================
+# TEXT TO SPEECH
+# ============================================================
+
+engine = pyttsx3.init()
+
+engine.setProperty(
+    "rate",
+    VOICE_RATE
 )
 
-
-pyautogui = None
-pyttsx3 = None
-wikipedia = None
-requests = None
-PdfReader = None
-Document = None
-
-
-# ------------------------------------------------------------
-# pyautogui ONLY ON WINDOWS
-# ------------------------------------------------------------
-
-if IS_WINDOWS:
-
-    try:
-        import pyautogui
-    except Exception:
-        pyautogui = None
-
-
-# ------------------------------------------------------------
-# pyttsx3 ONLY ON WINDOWS
-# ------------------------------------------------------------
-
-if IS_WINDOWS:
-
-    try:
-        import pyttsx3
-    except Exception:
-        pyttsx3 = None
-
-
-# ------------------------------------------------------------
-# Wikipedia
-# ------------------------------------------------------------
-
-try:
-    import wikipedia
-except Exception:
-    wikipedia = None
-
-
-# ------------------------------------------------------------
-# Requests
-# ------------------------------------------------------------
-
-try:
-    import requests
-except Exception:
-    requests = None
-
-
-# ------------------------------------------------------------
-# PDF
-# ------------------------------------------------------------
-
-try:
-    from PyPDF2 import PdfReader
-except Exception:
-    PdfReader = None
-
-
-# ------------------------------------------------------------
-# DOCX
-# ------------------------------------------------------------
-
-try:
-    from docx import Document
-except Exception:
-    Document = None
-
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-APP_NAME = "SAI Voice OS"
-
-GITHUB_USERNAME = os.getenv(
-    "GITHUB_USERNAME",
-    ""
-)
-
-GITHUB_TOKEN = os.getenv(
-    "GITHUB_TOKEN",
-    ""
+engine.setProperty(
+    "volume",
+    VOICE_VOLUME
 )
 
 
 # ============================================================
-# SESSION STATE
+# FIND ENGLISH VOICE
 # ============================================================
 
-if "last_response" not in st.session_state:
-    st.session_state.last_response = ""
+try:
 
-if "last_command" not in st.session_state:
-    st.session_state.last_command = ""
+    voices = engine.getProperty(
+        "voices"
+    )
 
-if "speaking" not in st.session_state:
-    st.session_state.speaking = False
+    for voice in voices:
 
+        voice_text = (
+            voice.name
+            + " "
+            + voice.id
+        ).lower()
 
-# ============================================================
-# WINDOWS TTS
-# ============================================================
+        if (
+            "english" in voice_text
+            or "en_" in voice_text
+            or "en-" in voice_text
+        ):
 
-tts_engine = None
-
-
-def initialize_windows_tts():
-
-    global tts_engine
-
-    if not IS_WINDOWS:
-        return
-
-    if pyttsx3 is None:
-        return
-
-    try:
-
-        tts_engine = pyttsx3.init()
-
-        voices = tts_engine.getProperty(
-            "voices"
-        )
-
-        if voices:
-
-            tts_engine.setProperty(
+            engine.setProperty(
                 "voice",
-                voices[0].id
+                voice.id
             )
 
-        tts_engine.setProperty(
-            "rate",
-            150
-        )
+            break
 
-        tts_engine.setProperty(
-            "volume",
-            1.0
-        )
+except Exception:
 
-    except Exception:
-
-        tts_engine = None
+    pass
 
 
 # ============================================================
-# CLOUD TTS
-# ============================================================
-
-def cloud_speak(text):
-
-    if not text:
-        return
-
-    safe_text = json.dumps(
-        str(text)
-    )
-
-    html = f"""
-    <script>
-
-    const text = {safe_text};
-
-    function speakNow() {{
-
-        if ("speechSynthesis" in window) {{
-
-            window.speechSynthesis.cancel();
-
-            const utterance =
-                new SpeechSynthesisUtterance(text);
-
-            utterance.lang = "en-IN";
-            utterance.rate = 0.95;
-            utterance.pitch = 1.0;
-            utterance.volume = 1.0;
-
-            window.speechSynthesis.speak(
-                utterance
-            );
-        }}
-
-    }}
-
-    speakNow();
-
-    </script>
-    """
-
-    st.components.v1.html(
-        html,
-        height=1
-    )
-
-
-# ============================================================
-# WINDOWS TTS
-# ============================================================
-
-def windows_speak(text):
-
-    if not text:
-        return
-
-    if tts_engine is None:
-        return
-
-    try:
-
-        tts_engine.say(
-            text
-        )
-
-        tts_engine.runAndWait()
-
-    except Exception:
-        pass
-
-
-# ============================================================
-# UNIVERSAL SPEAK
+# SPEAK
 # ============================================================
 
 def speak(text):
@@ -270,146 +124,52 @@ def speak(text):
     if not text:
         return
 
-    if IS_WINDOWS and not st.runtime.exists():
-
-        windows_speak(text)
-
-    else:
-
-        cloud_speak(text)
-
-
-# ============================================================
-# TIME
-# ============================================================
-
-def get_time():
-
-    current_time = (
-        datetime.datetime.now()
-        .strftime("%I:%M %p")
+    print(
+        "SAI:",
+        text
     )
-
-    return (
-        f"The current time is "
-        f"{current_time}."
-    )
-
-
-# ============================================================
-# DATE
-# ============================================================
-
-def get_date():
-
-    now = datetime.datetime.now()
-
-    return (
-        f"Today is "
-        f"{now.day} "
-        f"{now.strftime('%B')} "
-        f"{now.year}."
-    )
-
-
-# ============================================================
-# CALCULATOR
-# ============================================================
-
-def calculate(expression):
 
     try:
 
-        expression = expression.lower()
-
-        expression = expression.replace(
-            "multiplied by",
-            "*"
+        engine.say(
+            text
         )
 
-        expression = expression.replace(
-            "divided by",
-            "/"
+        engine.runAndWait()
+
+    except Exception as error:
+
+        print(
+            "TTS error:",
+            error
         )
 
-        expression = expression.replace(
-            "times",
-            "*"
-        )
 
-        expression = expression.replace(
-            "plus",
-            "+"
-        )
+# ============================================================
+# OPEN URL
+# ============================================================
 
-        expression = expression.replace(
-            "minus",
-            "-"
-        )
+def open_url(
+    url,
+    name
+):
 
-        expression = re.sub(
-            r"[^0-9+\-*/().% ]",
-            "",
-            expression
-        )
+    try:
 
-        if not expression.strip():
-
-            return (
-                "I could not understand "
-                "the calculation."
-            )
-
-        result = eval(
-            expression,
-            {
-                "__builtins__": {}
-            },
-            {}
+        webbrowser.open(
+            url,
+            new=2
         )
 
         return (
-            f"The answer is {result}."
+            f"Opening {name}."
         )
 
     except Exception:
 
         return (
-            "I could not calculate that."
+            f"I could not open {name}."
         )
-
-
-# ============================================================
-# BROWSER ACTION
-# ============================================================
-
-def browser_open(
-    url,
-    spoken_name
-):
-
-    html = f"""
-    <script>
-
-        const url =
-            {json.dumps(url)};
-
-        window.open(
-            url,
-            "_blank"
-        );
-
-    </script>
-    """
-
-    st.components.v1.html(
-        html,
-        height=1
-    )
-
-    return (
-        f"Opening {spoken_name}."
-    )
 
 
 # ============================================================
@@ -418,7 +178,7 @@ def browser_open(
 
 def open_youtube():
 
-    return browser_open(
+    return open_url(
         "https://www.youtube.com",
         "YouTube"
     )
@@ -430,7 +190,7 @@ def open_youtube():
 
 def open_google():
 
-    return browser_open(
+    return open_url(
         "https://www.google.com",
         "Google"
     )
@@ -440,14 +200,16 @@ def open_google():
 # GOOGLE SEARCH
 # ============================================================
 
-def google_search(query):
+def search_google(
+    query
+):
 
     url = (
         "https://www.google.com/search?q="
         + urllib.parse.quote(query)
     )
 
-    return browser_open(
+    return open_url(
         url,
         f"Google search for {query}"
     )
@@ -457,7 +219,9 @@ def google_search(query):
 # YOUTUBE SEARCH
 # ============================================================
 
-def youtube_search(query):
+def search_youtube(
+    query
+):
 
     url = (
         "https://www.youtube.com/results?"
@@ -465,390 +229,128 @@ def youtube_search(query):
         + urllib.parse.quote(query)
     )
 
-    return browser_open(
+    return open_url(
         url,
         f"YouTube search for {query}"
     )
 
 
 # ============================================================
-# WIKIPEDIA
+# OPEN NOTEPAD
 # ============================================================
 
-def wikipedia_search(query):
-
-    if wikipedia is None:
-
-        return (
-            "Wikipedia is not available."
-        )
+def open_notepad():
 
     try:
 
-        return wikipedia.summary(
-            query,
-            sentences=3
+        subprocess.Popen(
+            ["notepad.exe"]
+        )
+
+        return "Opening Notepad."
+
+    except Exception:
+
+        return (
+            "I could not open Notepad."
+        )
+
+
+# ============================================================
+# OPEN CALCULATOR
+# ============================================================
+
+def open_calculator():
+
+    try:
+
+        subprocess.Popen(
+            ["calc.exe"]
+        )
+
+        return "Opening Calculator."
+
+    except Exception:
+
+        return (
+            "I could not open Calculator."
+        )
+
+
+# ============================================================
+# OPEN FILE EXPLORER
+# ============================================================
+
+def open_explorer():
+
+    try:
+
+        subprocess.Popen(
+            ["explorer.exe"]
+        )
+
+        return (
+            "Opening File Explorer."
         )
 
     except Exception:
 
         return (
-            "I could not find that "
-            "on Wikipedia."
+            "I could not open File Explorer."
         )
 
 
 # ============================================================
-# WEATHER
+# OPEN CHROME
 # ============================================================
 
-def get_weather(city):
+def open_chrome():
 
     try:
 
-        city_encoded = (
-            urllib.parse.quote(city)
+        subprocess.Popen(
+            [
+                "cmd",
+                "/c",
+                "start",
+                "chrome"
+            ]
         )
 
-        url = (
-            f"https://wttr.in/"
-            f"{city_encoded}"
-            f"?format=j1"
-        )
-
-        request = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent":
-                    "Mozilla/5.0"
-            }
-        )
-
-        response = urllib.request.urlopen(
-            request,
-            timeout=10
-        )
-
-        data = json.loads(
-            response.read().decode()
-        )
-
-        current = (
-            data[
-                "current_condition"
-            ][0]
-        )
-
-        temperature = (
-            current["temp_C"]
-        )
-
-        description = (
-            current[
-                "weatherDesc"
-            ][0]["value"]
-        )
-
-        return (
-            f"The current temperature "
-            f"in {city} is "
-            f"{temperature} degrees "
-            f"Celsius with "
-            f"{description}."
-        )
+        return "Opening Chrome."
 
     except Exception:
 
         return (
-            "Sorry, I could not "
-            "fetch the weather."
+            "I could not open Chrome."
         )
 
 
 # ============================================================
-# GITHUB
-# ============================================================
-
-def github_headers():
-
-    headers = {
-        "Accept":
-            "application/vnd.github+json"
-    }
-
-    if GITHUB_TOKEN:
-
-        headers[
-            "Authorization"
-        ] = (
-            f"Bearer {GITHUB_TOKEN}"
-        )
-
-    return headers
-
-
-def github_repositories():
-
-    if requests is None:
-        return []
-
-    if not GITHUB_USERNAME:
-        return []
-
-    try:
-
-        url = (
-            "https://api.github.com/users/"
-            f"{GITHUB_USERNAME}/repos"
-        )
-
-        response = requests.get(
-            url,
-            headers=github_headers(),
-            timeout=10
-        )
-
-        if response.status_code != 200:
-            return []
-
-        data = response.json()
-
-        return [
-            repo["name"]
-            for repo in data
-        ]
-
-    except Exception:
-
-        return []
-
-
-# ============================================================
-# DOCUMENT READER
-# ============================================================
-
-def read_pdf(data):
-
-    if PdfReader is None:
-
-        return (
-            "PDF reader is not installed."
-        )
-
-    try:
-
-        reader = PdfReader(
-            io.BytesIO(data)
-        )
-
-        text = []
-
-        for page_number, page in enumerate(
-            reader.pages,
-            start=1
-        ):
-
-            page_text = (
-                page.extract_text()
-                or ""
-            )
-
-            if page_text.strip():
-
-                text.append(
-                    f"Page {page_number}. "
-                    f"{page_text}"
-                )
-
-        return "\n".join(text)
-
-    except Exception:
-
-        return (
-            "I could not read the PDF."
-        )
-
-
-def read_txt(data):
-
-    try:
-
-        return data.decode(
-            "utf-8",
-            errors="ignore"
-        )
-
-    except Exception:
-
-        return (
-            "I could not read "
-            "the text file."
-        )
-
-
-def read_docx(data):
-
-    if Document is None:
-
-        return (
-            "DOCX reader is not installed."
-        )
-
-    temp_path = None
-
-    try:
-
-        with tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=".docx"
-        ) as temp:
-
-            temp.write(data)
-
-            temp_path = temp.name
-
-        document = Document(
-            temp_path
-        )
-
-        paragraphs = []
-
-        for paragraph in document.paragraphs:
-
-            if paragraph.text.strip():
-
-                paragraphs.append(
-                    paragraph.text
-                )
-
-        return "\n".join(
-            paragraphs
-        )
-
-    except Exception:
-
-        return (
-            "I could not read "
-            "the Word document."
-        )
-
-    finally:
-
-        if temp_path:
-
-            try:
-                os.remove(
-                    temp_path
-                )
-            except Exception:
-                pass
-
-
-# ============================================================
-# WINDOWS APPS
-# ============================================================
-
-def open_windows_app(
-    app
-):
-
-    if not IS_WINDOWS:
-
-        return (
-            f"{app} is available "
-            "on your Windows computer."
-        )
-
-    try:
-
-        if "notepad" in app:
-
-            subprocess.Popen(
-                ["notepad.exe"]
-            )
-
-            return (
-                "Opening Notepad."
-            )
-
-        if "calculator" in app:
-
-            subprocess.Popen(
-                ["calc.exe"]
-            )
-
-            return (
-                "Opening Calculator."
-            )
-
-        if "chrome" in app:
-
-            subprocess.Popen(
-                [
-                    "cmd",
-                    "/c",
-                    "start",
-                    "chrome"
-                ]
-            )
-
-            return (
-                "Opening Chrome."
-            )
-
-        if "explorer" in app:
-
-            subprocess.Popen(
-                ["explorer.exe"]
-            )
-
-            return (
-                "Opening File Explorer."
-            )
-
-    except Exception:
-
-        return (
-            "I could not open "
-            "that application."
-        )
-
-    return (
-        "That application is "
-        "not configured yet."
-    )
-
-
-# ============================================================
-# WHATSAPP
+# OPEN WHATSAPP
 # ============================================================
 
 def open_whatsapp():
 
-    if IS_WINDOWS:
+    try:
 
-        try:
+        subprocess.Popen(
+            [
+                "cmd",
+                "/c",
+                "start",
+                "whatsapp:"
+            ]
+        )
 
-            subprocess.Popen(
-                [
-                    "cmd",
-                    "/c",
-                    "start",
-                    "whatsapp:"
-                ]
-            )
+        return "Opening WhatsApp."
 
-            return (
-                "Opening WhatsApp."
-            )
+    except Exception:
 
-        except Exception:
-            pass
-
-    return browser_open(
-        "https://web.whatsapp.com",
-        "WhatsApp Web"
-    )
+        return open_url(
+            "https://web.whatsapp.com",
+            "WhatsApp Web"
+        )
 
 
 # ============================================================
@@ -856,20 +358,6 @@ def open_whatsapp():
 # ============================================================
 
 def take_screenshot():
-
-    if not IS_WINDOWS:
-
-        return (
-            "Screenshot is available "
-            "on your Windows computer."
-        )
-
-    if pyautogui is None:
-
-        return (
-            "Screenshot support "
-            "is not available."
-        )
 
     try:
 
@@ -914,7 +402,222 @@ def take_screenshot():
 
 
 # ============================================================
-# COMMAND PREFIX
+# CURRENT TIME
+# ============================================================
+
+def current_time():
+
+    now = datetime.datetime.now()
+
+    return (
+        "The current time is "
+        + now.strftime("%I:%M %p")
+        + "."
+    )
+
+
+# ============================================================
+# CURRENT DATE
+# ============================================================
+
+def current_date():
+
+    now = datetime.datetime.now()
+
+    return (
+        "Today is "
+        + now.strftime("%A, %d %B %Y")
+        + "."
+    )
+
+
+# ============================================================
+# CALCULATOR
+# ============================================================
+
+def calculate(
+    expression
+):
+
+    try:
+
+        expression = expression.lower()
+
+        expression = expression.replace(
+            "multiplied by",
+            "*"
+        )
+
+        expression = expression.replace(
+            "divided by",
+            "/"
+        )
+
+        expression = expression.replace(
+            "times",
+            "*"
+        )
+
+        expression = expression.replace(
+            "plus",
+            "+"
+        )
+
+        expression = expression.replace(
+            "minus",
+            "-"
+        )
+
+        expression = expression.replace(
+            "into",
+            "*"
+        )
+
+        expression = expression.replace(
+            "point",
+            "."
+        )
+
+        expression = re.sub(
+            r"[^0-9+\-*/().% ]",
+            "",
+            expression
+        )
+
+        if not expression.strip():
+
+            return (
+                "I could not understand "
+                "the calculation."
+            )
+
+        result = eval(
+            expression,
+            {
+                "__builtins__": {}
+            },
+            {}
+        )
+
+        return (
+            f"The answer is {result}."
+        )
+
+    except Exception:
+
+        return (
+            "I could not calculate that."
+        )
+
+
+# ============================================================
+# SYSTEM VOLUME
+# ============================================================
+
+def volume_up():
+
+    try:
+
+        for _ in range(5):
+
+            pyautogui.press(
+                "volumeup"
+            )
+
+        return (
+            "Volume increased."
+        )
+
+    except Exception:
+
+        return (
+            "I could not change the volume."
+        )
+
+
+def volume_down():
+
+    try:
+
+        for _ in range(5):
+
+            pyautogui.press(
+                "volumedown"
+            )
+
+        return (
+            "Volume decreased."
+        )
+
+    except Exception:
+
+        return (
+            "I could not change the volume."
+        )
+
+
+def mute_volume():
+
+    try:
+
+        pyautogui.press(
+            "volumemute"
+        )
+
+        return (
+            "Volume muted."
+        )
+
+    except Exception:
+
+        return (
+            "I could not mute the volume."
+        )
+
+
+# ============================================================
+# LOCK WINDOWS
+# ============================================================
+
+def lock_windows():
+
+    try:
+
+        subprocess.run(
+            [
+                "rundll32.exe",
+                "user32.dll,LockWorkStation"
+            ]
+        )
+
+        return (
+            "Locking the computer."
+        )
+
+    except Exception:
+
+        return (
+            "I could not lock the computer."
+        )
+
+
+# ============================================================
+# OPEN WEBSITE
+# ============================================================
+
+def open_website(
+    name,
+    url
+):
+
+    return open_url(
+        url,
+        name
+    )
+
+
+# ============================================================
+# EXTRACT AFTER PREFIX
 # ============================================================
 
 def extract_after(
@@ -924,7 +627,9 @@ def extract_after(
 
     for prefix in prefixes:
 
-        if command.startswith(prefix):
+        if command.startswith(
+            prefix
+        ):
 
             return command[
                 len(prefix):
@@ -934,35 +639,75 @@ def extract_after(
 
 
 # ============================================================
-# INTENT ENGINE
+# REMOVE WAKE WORD
 # ============================================================
 
-def process_command(
+def remove_wake_word(
     command
 ):
 
-    if not command:
+    wake_words = [
+        "sai",
+        "hey sai",
+        "ok sai",
+        "okay sai"
+    ]
 
-        return (
-            "I did not hear you."
-        )
+    command = command.strip()
 
+    for wake in wake_words:
+
+        if command.startswith(
+            wake
+        ):
+
+            command = command[
+                len(wake):
+            ].strip()
+
+            break
+
+    return command
+
+
+# ============================================================
+# COMMAND PROCESSOR
+# ============================================================
+
+def process_command(
+    original_command
+):
 
     command = (
-        command
+        original_command
         .lower()
         .strip()
     )
 
+    # --------------------------------------------------------
+    # REMOVE WAKE WORD
+    # --------------------------------------------------------
 
-    # --------------------------------------------------------
+    command = remove_wake_word(
+        command
+    )
+
+    if not command:
+
+        return (
+            "Yes, I am listening."
+        )
+
+
+    # ========================================================
     # EXIT
-    # --------------------------------------------------------
+    # ========================================================
 
     if command in [
         "exit",
         "quit",
-        "stop",
+        "shutdown sai",
+        "stop listening",
         "go offline",
         "goodbye"
     ]:
@@ -970,9 +715,9 @@ def process_command(
         return "__EXIT__"
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # TIME
-    # --------------------------------------------------------
+    # ========================================================
 
     if (
         command == "time"
@@ -984,58 +729,87 @@ def process_command(
         in command
     ):
 
-        return get_time()
+        return current_time()
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # DATE
-    # --------------------------------------------------------
+    # ========================================================
 
     if (
         command == "date"
+        or
+        "what is today's date"
+        in command
         or
         "what is the date"
         in command
     ):
 
-        return get_date()
+        return current_date()
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # YOUTUBE
-    # --------------------------------------------------------
+    # ========================================================
 
-    if any(
-        phrase in command
-        for phrase in [
-            "open youtube",
-            "launch youtube",
-            "start youtube"
-        ]
+    if (
+        "open youtube"
+        in command
+        or
+        "launch youtube"
+        in command
+        or
+        "start youtube"
+        in command
     ):
 
         return open_youtube()
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # GOOGLE
-    # --------------------------------------------------------
+    # ========================================================
 
-    if any(
-        phrase in command
-        for phrase in [
-            "open google",
-            "launch google",
-            "start google"
-        ]
+    if (
+        "open google"
+        in command
+        or
+        "launch google"
+        in command
+        or
+        "start google"
+        in command
     ):
 
         return open_google()
 
 
-    # --------------------------------------------------------
+    # ========================================================
+    # YOUTUBE SEARCH
+    # ========================================================
+
+    query = extract_after(
+        command,
+        [
+            "search youtube for",
+            "search youtube",
+            "youtube search for",
+            "play on youtube",
+            "play youtube"
+        ]
+    )
+
+    if query:
+
+        return search_youtube(
+            query
+        )
+
+
+    # ========================================================
     # GOOGLE SEARCH
-    # --------------------------------------------------------
+    # ========================================================
 
     query = extract_after(
         command,
@@ -1049,79 +823,44 @@ def process_command(
 
     if query:
 
-        return google_search(
+        return search_google(
             query
         )
 
 
-    # --------------------------------------------------------
-    # YOUTUBE SEARCH
-    # --------------------------------------------------------
+    # ========================================================
+    # NOTEPAD
+    # ========================================================
 
-    query = extract_after(
-        command,
-        [
-            "search youtube for",
-            "search youtube",
-            "play on youtube",
-            "play youtube"
-        ]
-    )
+    if (
+        "open notepad"
+        in command
+        or
+        "start notepad"
+        in command
+    ):
 
-    if query:
-
-        return youtube_search(
-            query
-        )
+        return open_notepad()
 
 
-    # --------------------------------------------------------
-    # WIKIPEDIA
-    # --------------------------------------------------------
+    # ========================================================
+    # CALCULATOR APP
+    # ========================================================
 
-    query = extract_after(
-        command,
-        [
-            "search wikipedia for",
-            "wikipedia"
-        ]
-    )
+    if (
+        "open calculator"
+        in command
+        or
+        "start calculator"
+        in command
+    ):
 
-    if query:
-
-        return wikipedia_search(
-            query
-        )
+        return open_calculator()
 
 
-    # --------------------------------------------------------
-    # WEATHER
-    # --------------------------------------------------------
-
-    if "weather" in command:
-
-        city = "Guntur"
-
-        match = re.search(
-            r"weather\s+(?:in\s+)?(.+)",
-            command
-        )
-
-        if match:
-
-            city = (
-                match.group(1)
-                .strip()
-            )
-
-        return get_weather(
-            city
-        )
-
-
-    # --------------------------------------------------------
-    # CALCULATOR
-    # --------------------------------------------------------
+    # ========================================================
+    # CALCULATION
+    # ========================================================
 
     if command.startswith(
         "calculate"
@@ -1136,45 +875,24 @@ def process_command(
         )
 
 
-    # --------------------------------------------------------
-    # NOTEPAD
-    # --------------------------------------------------------
-
-    if "open notepad" in command:
-
-        return open_windows_app(
-            "notepad"
-        )
-
-
-    # --------------------------------------------------------
-    # CALCULATOR APP
-    # --------------------------------------------------------
+    # ========================================================
+    # CHROME
+    # ========================================================
 
     if (
-        "open calculator"
+        "open chrome"
+        in command
+        or
+        "start chrome"
         in command
     ):
 
-        return open_windows_app(
-            "calculator"
-        )
+        return open_chrome()
 
 
-    # --------------------------------------------------------
-    # CHROME
-    # --------------------------------------------------------
-
-    if "open chrome" in command:
-
-        return open_windows_app(
-            "chrome"
-        )
-
-
-    # --------------------------------------------------------
+    # ========================================================
     # FILE EXPLORER
-    # --------------------------------------------------------
+    # ========================================================
 
     if (
         "open file explorer"
@@ -1184,23 +902,24 @@ def process_command(
         in command
     ):
 
-        return open_windows_app(
-            "explorer"
-        )
+        return open_explorer()
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # WHATSAPP
-    # --------------------------------------------------------
+    # ========================================================
 
-    if "open whatsapp" in command:
+    if (
+        "open whatsapp"
+        in command
+    ):
 
         return open_whatsapp()
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # SCREENSHOT
-    # --------------------------------------------------------
+    # ========================================================
 
     if (
         "take screenshot"
@@ -1212,436 +931,368 @@ def process_command(
         return take_screenshot()
 
 
-    # --------------------------------------------------------
-    # GITHUB
-    # --------------------------------------------------------
+    # ========================================================
+    # VOLUME UP
+    # ========================================================
 
-    if any(
-        phrase in command
-        for phrase in [
-            "list github repositories",
-            "show github repositories",
-            "my github repositories"
-        ]
+    if (
+        "increase volume"
+        in command
+        or
+        "volume up"
+        in command
+        or
+        "turn up volume"
+        in command
     ):
 
-        repos = (
-            github_repositories()
+        return volume_up()
+
+
+    # ========================================================
+    # VOLUME DOWN
+    # ========================================================
+
+    if (
+        "decrease volume"
+        in command
+        or
+        "volume down"
+        in command
+        or
+        "turn down volume"
+        in command
+    ):
+
+        return volume_down()
+
+
+    # ========================================================
+    # MUTE
+    # ========================================================
+
+    if (
+        "mute"
+        in command
+        or
+        "mute volume"
+        in command
+    ):
+
+        return mute_volume()
+
+
+    # ========================================================
+    # LOCK
+    # ========================================================
+
+    if (
+        "lock computer"
+        in command
+        or
+        "lock the computer"
+        in command
+        or
+        "lock my computer"
+        in command
+    ):
+
+        return lock_windows()
+
+
+    # ========================================================
+    # OPEN COMMON WEBSITES
+    # ========================================================
+
+    if (
+        command == "open github"
+    ):
+
+        return open_website(
+            "GitHub",
+            "https://github.com"
         )
 
-        if not repos:
 
-            return (
-                "I could not retrieve "
-                "your GitHub repositories."
-            )
+    if (
+        command == "open gmail"
+    ):
 
-        return (
-            "Your GitHub repositories "
-            "are "
-            + ", ".join(repos)
+        return open_website(
+            "Gmail",
+            "https://mail.google.com"
         )
 
 
-    # --------------------------------------------------------
-    # UNKNOWN
-    # --------------------------------------------------------
+    if (
+        command == "open facebook"
+    ):
+
+        return open_website(
+            "Facebook",
+            "https://www.facebook.com"
+        )
+
+
+    if (
+        command == "open linkedin"
+    ):
+
+        return open_website(
+            "LinkedIn",
+            "https://www.linkedin.com"
+        )
+
+
+    # ========================================================
+    # UNKNOWN COMMAND
+    # ========================================================
 
     return (
-        "I do not understand "
-        "that command yet."
+        "I heard you, but I do not "
+        "know how to perform that "
+        "action yet."
     )
 
 
 # ============================================================
-# AUDIO PROCESSOR
+# MICROPHONE CALIBRATION
 # ============================================================
 
-class SAIProcessor(
-    AudioProcessorBase
-):
+def calibrate_microphone():
 
-    def __init__(self):
+    print()
+    print(
+        "Calibrating microphone..."
+    )
 
-        self.audio_queue = queue.Queue()
+    try:
 
-    def recv(
-        self,
-        frame
-    ):
+        with sr.Microphone() as source:
 
-        try:
-
-            audio = frame.to_ndarray()
-
-            self.audio_queue.put(
-                audio.copy()
+            recognizer.adjust_for_ambient_noise(
+                source,
+                duration=2
             )
 
-        except Exception:
-            pass
+        print(
+            "Microphone ready."
+        )
 
-        return frame
+    except Exception as error:
+
+        print(
+            "Microphone initialization error:",
+            error
+        )
+
+        speak(
+            "I could not access "
+            "the microphone."
+        )
+
+        raise
 
 
 # ============================================================
-# GLOBAL AUDIO QUEUE
+# ALWAYS LISTEN
 # ============================================================
 
-if "audio_queue" not in st.session_state:
+def listen_forever():
 
-    st.session_state.audio_queue = queue.Queue()
+    calibrate_microphone()
 
-
-# ============================================================
-# SPEECH WORKER
-# ============================================================
-
-def speech_worker(
-    processor
-):
-
-    recognizer = sr.Recognizer()
-
-    audio_buffer = []
-
-    last_audio_time = time.time()
+    speak(
+        "SAI Voice OS is ready. "
+        "I am listening."
+    )
 
     while True:
 
         try:
 
-            audio = (
-                processor.audio_queue.get(
-                    timeout=1
-                )
-            )
-
-            audio_buffer.append(
-                audio
-            )
-
-            last_audio_time = (
-                time.time()
-            )
-
-            # Keep approximately
-            # a manageable rolling buffer
-
-            if len(audio_buffer) > 50:
-
-                audio_buffer.pop(0)
-
-        except queue.Empty:
-
-            # No audio received
-            # continue listening
-
-            continue
-
-        # ----------------------------------------------------
-        # Process only periodically
-        # ----------------------------------------------------
-
-        if len(audio_buffer) < 15:
-
-            continue
-
-        try:
-
-            combined = np.concatenate(
-                audio_buffer,
-                axis=0
-            )
-
-            # Convert to mono
-            if combined.ndim > 1:
-
-                combined = np.mean(
-                    combined,
-                    axis=1
-                )
-
-            # Normalize
-            combined = np.asarray(
-                combined,
-                dtype=np.float32
-            )
-
-            maximum = np.max(
-                np.abs(combined)
-            )
-
-            if maximum == 0:
-
-                continue
-
-            combined = (
-                combined / maximum
-            )
-
             # ------------------------------------------------
-            # Simple voice activity check
+            # MICROPHONE ALWAYS ACTIVE
             # ------------------------------------------------
 
-            volume = np.mean(
-                np.abs(combined)
-            )
+            with sr.Microphone() as source:
 
-            if volume < 0.01:
-
-                continue
-
-            # ------------------------------------------------
-            # WAV conversion
-            # ------------------------------------------------
-
-            import wave
-
-            wav_buffer = (
-                io.BytesIO()
-            )
-
-            with wave.open(
-                wav_buffer,
-                "wb"
-            ) as wav_file:
-
-                wav_file.setnchannels(
-                    1
+                print()
+                print(
+                    "🎙️ Listening..."
                 )
 
-                wav_file.setsampwidth(
-                    2
-                )
+                try:
 
-                wav_file.setframerate(
-                    48000
-                )
-
-                pcm = (
-                    combined * 32767
-                ).astype(
-                    np.int16
-                )
-
-                wav_file.writeframes(
-                    pcm.tobytes()
-                )
-
-            wav_buffer.seek(0)
-
-            # ------------------------------------------------
-            # Speech recognition
-            # ------------------------------------------------
-
-            with sr.AudioFile(
-                wav_buffer
-            ) as source:
-
-                audio_data = (
-                    recognizer.record(
-                        source
+                    audio = recognizer.listen(
+                        source,
+                        timeout=LISTEN_TIMEOUT,
+                        phrase_time_limit=PHRASE_TIME_LIMIT
                     )
-                )
+
+                except sr.WaitTimeoutError:
+
+                    continue
+
+
+            # ------------------------------------------------
+            # SPEECH RECOGNITION
+            # ------------------------------------------------
+
+            print(
+                "Recognizing..."
+            )
 
             try:
 
                 command = (
                     recognizer
                     .recognize_google(
-                        audio_data,
-                        language="en-IN"
+                        audio,
+                        language=LANGUAGE
                     )
                 )
 
-            except Exception:
+            except sr.UnknownValueError:
 
-                audio_buffer.clear()
-
-                continue
-
-            if not command:
-
-                audio_buffer.clear()
+                # Nothing understandable.
+                # Immediately listen again.
 
                 continue
 
-            command = command.lower().strip()
+            except sr.RequestError:
+
+                speak(
+                    "Speech recognition "
+                    "service is unavailable. "
+                    "I will keep listening."
+                )
+
+                time.sleep(2)
+
+                continue
+
 
             # ------------------------------------------------
-            # Prevent repeated same command
+            # COMMAND
             # ------------------------------------------------
 
-            if (
+            command = (
                 command
-                == st.session_state.last_command
-            ):
+                .lower()
+                .strip()
+            )
 
-                audio_buffer.clear()
-
-                continue
-
-            st.session_state.last_command = (
+            print(
+                "USER:",
                 command
             )
 
+
             # ------------------------------------------------
-            # Execute
+            # PROCESS
             # ------------------------------------------------
 
             response = process_command(
                 command
             )
 
+
+            # ------------------------------------------------
+            # EXIT
+            # ------------------------------------------------
+
             if response == "__EXIT__":
 
-                response = (
-                    "Voice mode is stopping."
+                speak(
+                    "SAI Voice OS is "
+                    "going offline."
                 )
 
-            st.session_state.last_response = (
+                break
+
+
+            # ------------------------------------------------
+            # ANSWER
+            # ------------------------------------------------
+
+            speak(
                 response
             )
 
+
             # ------------------------------------------------
-            # Answer
+            # IMPORTANT
+            # ------------------------------------------------
+            # After speaking,
+            # automatically return to listening.
             # ------------------------------------------------
 
-            cloud_speak(
-                response
+            time.sleep(0.3)
+
+
+        except KeyboardInterrupt:
+
+            speak(
+                "SAI Voice OS is "
+                "going offline."
             )
 
-            # ------------------------------------------------
-            # IMPORTANT:
-            # Clear buffer and continue listening
-            # ------------------------------------------------
+            break
 
-            audio_buffer.clear()
 
-        except Exception:
+        except Exception as error:
 
-            audio_buffer.clear()
+            print(
+                "System error:",
+                error
+            )
+
+            time.sleep(1)
 
             continue
 
 
 # ============================================================
-# MAIN STREAMLIT APP
+# MAIN
 # ============================================================
 
 def main():
 
-    st.set_page_config(
-        page_title="SAI Voice OS",
-        page_icon="🎙️",
-        layout="centered"
+    print()
+    print(
+        "=========================================="
     )
 
-
-    # ========================================================
-    # HIDE STREAMLIT UI
-    # ========================================================
-
-    st.markdown(
-        """
-        <style>
-
-        #MainMenu {
-            visibility: hidden;
-        }
-
-        header {
-            visibility: hidden;
-        }
-
-        footer {
-            visibility: hidden;
-        }
-
-        .stApp {
-            background: white;
-        }
-
-        </style>
-        """,
-        unsafe_allow_html=True
+    print(
+        "          SAI VOICE OS"
     )
 
-
-    # ========================================================
-    # VOICE OS
-    # ========================================================
-
-    st.markdown(
-        """
-        <h1 style="text-align:center;">
-            🎙️ SAI Voice OS
-        </h1>
-        """,
-        unsafe_allow_html=True
+    print(
+        "       ALWAYS LISTENING MODE"
     )
 
-
-    # ========================================================
-    # CONTINUOUS MICROPHONE
-    # ========================================================
-
-    rtc_configuration = RTCConfiguration(
-        {
-            "iceServers": [
-                {
-                    "urls": [
-                        "stun:stun.l.google.com:19302"
-                    ]
-                }
-            ]
-        }
+    print(
+        "=========================================="
     )
 
+    print()
 
-    ctx = webrtc_streamer(
-        key="sai_voice_os",
-
-        mode=WebRtcMode.SENDONLY,
-
-        rtc_configuration=rtc_configuration,
-
-        media_stream_constraints={
-            "video": False,
-            "audio": True
-        },
-
-        audio_processor_factory=SAIProcessor,
-
-        async_processing=True
+    print(
+        "Microphone will start automatically."
     )
 
+    print(
+        "No manual microphone ON/OFF required."
+    )
 
-    # ========================================================
-    # START SPEECH PROCESSOR
-    # ========================================================
+    print()
 
-    if ctx.state.playing:
-
-        if (
-            "worker_started"
-            not in st.session_state
-        ):
-
-            st.session_state.worker_started = True
-
-            worker = threading.Thread(
-                target=speech_worker,
-                args=(ctx.audio_processor,),
-                daemon=True
-            )
-
-            worker.start()
+    listen_forever()
 
 
 # ============================================================
-# RUN
+# START
 # ============================================================
 
 if __name__ == "__main__":
