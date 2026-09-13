@@ -1,3 +1,8 @@
-streamlit>=1.40
-requests>=2.31
-pypdf>=5.0
+streamlit
+SpeechRecognition
+requests
+wikipedia
+PyPDF2
+python-docx
+pyttsx3
+pyautogui
