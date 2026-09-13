@@ -1,55 +1,68 @@
-# 🎙️ SAI VoiceOS
+# SAI VoiceOS Complete
 
-An accessibility-focused, voice-first computing environment designed for blind and visually impaired users.
+## Streamlit Cloud
 
-## Current MVP
-This is the first engineering prototype, not a replacement operating system.
+Deploy `sai_voiceos.py`.
 
-- Streamlit prototype UI
-- Natural-language command routing
-- Safe application launching
-- Voice-style folder creation
-- Workspace file listing
-- System status
-- SQLite command history
-- Safety architecture
+The root `requirements.txt` installs only cloud-safe dependencies.
 
-## Architecture
+Add these Streamlit Secrets:
 
-Voice → Speech-to-Text → AI/Intent → Safety/Permissions → OS/Browser/File Action → Text-to-Speech
+GITHUB_TOKEN = "YOUR_GITHUB_TOKEN"
+GITHUB_REPOSITORY = "YOUR_USERNAME/YOUR_REPOSITORY"
+GITHUB_BRANCH = "main"
 
-## Example commands
-- `help`
-- `system status`
-- `list files`
-- `create folder Projects`
-- `open calculator`
-- `open notepad`
+## Local Windows
 
-## Run
+Install:
 
-```bash
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux/macOS
-source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run app.py
-```
+    pip install -r local_requirements.txt
 
-## Roadmap
-1. Real microphone + speech-to-text
-2. Text-to-speech
-3. Windows accessibility APIs / screen reader
-4. OCR and screen understanding
-5. Browser, documents, email and messaging controls
-6. Safety confirmations and permissions
-7. SAI VoiceOS desktop shell
-8. Linux-based accessibility environment
-9. Android accessibility application
+Run:
 
-## Security principle
-The AI should never have unrestricted OS access. It should produce a structured intent, which passes permission and safety checks before an approved tool executes the action.
+    python sai_voiceos.py
 
-This project is an early prototype and requires accessibility, privacy, security and usability testing before production use.
+Configure GitHub:
+
+    setx SAI_GITHUB_TOKEN "YOUR_GITHUB_TOKEN"
+    setx SAI_GITHUB_REPOSITORY "YOUR_USERNAME/YOUR_REPOSITORY"
+    setx SAI_GITHUB_BRANCH "main"
+
+Close and reopen the terminal after `setx`.
+
+## Features
+
+- Speech-to-text
+- Text-to-speech
+- Calculator
+- Notepad
+- Browser
+- Google
+- YouTube
+- WhatsApp
+- Screenshot
+- Music
+- Voice notes
+- Weather
+- Internet search
+- Direct web answers when available
+- GitHub upload/push
+- GitHub download
+- GitHub file listing
+- GitHub PDF reading
+- GitHub PDF search
+- Local PDF reading
+- Search inside PDF
+- Text file reading
+- Local file search
+- Unknown commands fall back to Internet search
+
+## Important
+
+Streamlit Cloud runs remotely. It cannot control the user's personal Windows desktop.
+
+The same Python file therefore contains both:
+- cloud functionality
+- local Windows functionality
+
+For actual microphone, TTS, Calculator, WhatsApp Desktop, screenshot and local file control, run the file on the user's computer.
